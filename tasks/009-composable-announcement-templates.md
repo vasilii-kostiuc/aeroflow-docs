@@ -1,6 +1,6 @@
 # Composable Announcement Templates
 
-Status: Ready  
+Status: Done
 Bounded context: Announcements, Flight Operations, Audio Catalog  
 Service: aeroflow-core  
 Change type: Domain, Application, Infrastructure, API, Migration
@@ -385,4 +385,3 @@ Variant endpoints продолжают управлять языком, поря
 * изменить статус задачи на `Done`;
 * зафиксировать реализацию отдельными атомарными коммитами в core и docs;
 * выполнить merge в `master` только после полного quality gate.
-
