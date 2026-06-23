@@ -300,6 +300,30 @@ aeroflow-agent
 
 # Совместимость со старой САО
 
+## Подготовка составного объявления
+
+`aeroflow-core` хранит редактируемый шаблон отдельно от факта запуска:
+
+```text
+FlightAnnouncementConfig
+    -> AnnouncementVariant
+        -> ordered template segments
+```
+
+Во время запуска Core получает snapshots выбранных стоек или выхода, разрешает
+динамические слоты через Audio Catalog и сохраняет готовую неизменяемую
+`AudioSequence` в `Announcement`.
+
+```text
+template + runtime parameters
+    -> consumer-owned integration ports
+    -> AudioSequence
+    -> future RequestAnnouncementPlayback
+```
+
+Playback и Agent получают только готовую последовательность и не знают про
+шаблоны, prompts, стойки или выходы.
+
 Новая система должна поддерживать использование существующих аудиофайлов старой САО.
 
 Старая структура:
