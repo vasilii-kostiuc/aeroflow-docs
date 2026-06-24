@@ -542,6 +542,22 @@ kind + value + languageCode -> audioAssetId
 Категории и языки могут оставаться справочниками, пока у них нет собственного
 поведения.
 
+`AudioPrompt` координируется через command/query handlers на application bus,
+а не через CRUD-сервис: `CreateAudioPromptCommand`, `UpdateAudioPromptCommand`,
+`ChangeAudioPromptStatusCommand` и `ListAudioPromptsQuery` возвращают
+`AudioPromptResult`. Это оправдано тем, что у `AudioPrompt` есть жизненный цикл и
+инварианты (валидация и нормализация `value`, уникальность активной комбинации
+`kind + value + languageCode`, запрет ссылки на недоступный или неактивный
+`AudioAsset` — межагрегатная проверка), а также доменные события
+`AudioPromptCreated`, `AudioPromptUpdated`, `AudioPromptActivated`,
+`AudioPromptDeactivated`.
+
+Известное расхождение: `Gate` и `CheckInCounter` имеют ту же форму (aggregate root
+с инвариантами и событиями, координируемый тонкой application-директорией
+`GateDirectory` / `CheckInCounterDirectory`), но пока сознательно оставлены
+директориями. Это осознанный переходный компромисс, а не принципиальная граница;
+приведение их к тому же стилю, что и `AudioPrompt`, вынесено в открытые решения.
+
 ---
 
 # Целевая модель: Playback
@@ -775,7 +791,10 @@ Doctrine и других библиотек.
 * правила повторов объявлений о продолжении регистрации;
 * обязательность outbox в первой production-версии;
 * формат версионирования integration messages;
-* объём audit log и сроки хранения.
+* объём audit log и сроки хранения;
+* привести `GateDirectory` и `CheckInCounterDirectory` к стилю command/query
+  handlers, как `AudioPrompt`, либо сознательно закрепить за справочными
+  агрегатами паттерн тонкой директории — сейчас они одинаковы по форме.
 
 Открытый вопрос не должен решаться случайно внутри controller, Doctrine repository
 или message handler. Решение сначала фиксируется в этом документе.
