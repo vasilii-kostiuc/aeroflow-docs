@@ -1,6 +1,6 @@
 # Flight Occurrences Core
 
-Status: In Progress  
+Status: Done  
 Bounded context: Flight Operations, Announcements  
 Service: aeroflow-core  
 Change type: Domain, Application, Infrastructure, API, Migration
@@ -223,10 +223,9 @@ Handler:
 Нельзя сохранить `Announcement`, если переход occurrence не применился, и нельзя
 применить переход без созданного `Announcement`.
 
-Механизм атомарности — `doctrine_transaction` middleware на `command.bus` либо
-явная транзакция в оркестраторе (выбор — деталь реализации). Сейчас на
-`command.bus` транзакционного middleware нет, и репозитории делают независимый
-`flush()` — это нужно устранить.
+Механизм атомарности — `doctrine_transaction` middleware на `command.bus`.
+Domain events буферизуются внутри command transaction scope и публикуются после
+успешного коммита.
 
 ### Context Boundary
 
@@ -443,6 +442,13 @@ Tests:
 
 ```bash
 php bin/phpunit
+```
+
+Verified:
+
+```text
+php bin/phpunit tests/Unit tests/Application
+docker compose exec -T aeroflow_core_app php bin/phpunit tests/Functional
 ```
 
 Manual QA:
