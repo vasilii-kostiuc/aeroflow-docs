@@ -108,17 +108,18 @@ Doctrine attributes в доменных сущностях допустимы к
 
 ### Flight Operations
 
-Статус: частично реализован (`FlightDefinition`).
+Статус: частично реализован (`FlightDefinition` и `FlightOccurrence`).
 
 Отвечает за:
 
 * каталог рейсов;
 * будущее расписание;
-* будущие конкретные вылеты;
+* конкретные operational рейсы (`FlightOccurrence`);
 * регистрацию;
 * посадку;
 * прибытие;
-* назначение выхода и стоек регистрации.
+* назначение выхода и стоек регистрации;
+* оркестрацию запуска рейсового объявления как действия над `FlightOccurrence`.
 
 ### Airport Directory
 
@@ -332,11 +333,11 @@ Domain events:
 * `FlightDefinitionActivated`;
 * `FlightDefinitionDeactivated`.
 
-Текущий ручной сценарий:
+Текущий сценарий:
 
 ```text
 FlightDefinition
-    -> действие диспетчера
+    -> FlightOccurrence
     -> Announcement
 ```
 
@@ -350,36 +351,131 @@ FlightDefinition
 
 ## FlightOccurrence
 
-Статус: возможное будущее расширение.
+Статус: реализован как core-срез operational рейса.
 
-`FlightOccurrence` представляет конкретный вылет в определённую дату. Он нужен,
-если система должна независимо хранить:
+`FlightOccurrence` представляет конкретный operational рейс в определённую дату.
+Он нужен, чтобы независимо хранить:
 
 * состояние регистрации и посадки;
 * назначенные стойки и выход;
-* задержку, отмену и фактическое время;
-* историю действий и объявлений конкретного вылета.
+* связь с последним объявлением;
+* историю действий и объявлений конкретного вылета или прилёта.
 
-Целевой lifecycle конкретного вылета:
+Lifecycle вылета:
 
 ```text
-Scheduled
-  -> CheckInOpen
-  -> CheckInClosed
-  -> Boarding
-  -> Completed
+scheduled
+  -> check_in_open
+  -> check_in_closed
+  -> boarding
+  -> completed
 ```
 
-Отмена и задержка будут отдельными бизнес-переходами. Точный lifecycle фиксируется
-при появлении первого use case, которому действительно нужен `FlightOccurrence`.
+Lifecycle прилёта:
 
-Будущая связь:
+```text
+scheduled
+  -> arrival_announced
+  -> completed
+```
+
+Отмена поддерживается как переход в `cancelled`. Задержка и фактическое время
+остаются будущими расширениями.
+
+Состояние:
+
+* `id`;
+* `flightDefinitionId`;
+* `source`: `manual` или `schedule`;
+* `direction`: совпадает с направлением `FlightDefinition`;
+* `operationalDate`;
+* `sequenceNumber`;
+* snapshots номера рейса и кодов аэропортов;
+* `status`;
+* snapshots выбранных стоек и выхода;
+* `lastAnnouncementId`;
+* даты создания, изменения, завершения и отмены.
+
+Инварианты:
+
+* occurrence создаётся только для активного `FlightDefinition`;
+* `direction` occurrence совпадает с направлением `FlightDefinition`;
+* бизнес-ключ `flightDefinitionId + operationalDate + source + sequenceNumber`
+  уникален;
+* нельзя открыть регистрацию дважды, продолжить или закрыть её до открытия,
+  начать посадку до закрытия регистрации;
+* нельзя объявить прибытие для вылетающего occurrence и открыть регистрацию или
+  посадку для прибывающего;
+* завершённый или отменённый occurrence нельзя менять;
+* выбранные стойки и выход сохраняются как snapshot на момент перехода;
+* `lastAnnouncementId` — голый идентификатор объявления (правило #6), а не
+  ORM-связь с агрегатом `Announcement`.
+
+Domain events:
+
+* `FlightOccurrenceCreated`;
+* `CheckInOpened`;
+* `CheckInContinued`;
+* `CheckInClosed`;
+* `BoardingStarted`;
+* `ArrivalAnnounced`;
+* `FlightOccurrenceCompleted`;
+* `FlightOccurrenceCancelled`.
+
+Эти события — факты уже состоявшегося перехода. Они потребляются audit,
+read-моделью, будущим playback и будущим process manager авто-повторов
+«продолжение регистрации». Они **не** используются как триггер создания основного
+объявления: создание объявления является частью самого действия диспетчера, а не
+реакцией на событие перехода (см. ниже).
+
+### Запуск рейсового объявления
+
+Запуск рейсового объявления — это **действие над `FlightOccurrence`**, а не над
+`FlightDefinition`. `FlightDefinition` остаётся только шаблоном/карточкой.
+Одно действие диспетчера атомарно: продвигает lifecycle occurrence и создаёт
+`Announcement`.
+
+Правила:
+
+* оркестрация принадлежит `Flight Operations\Application` (per-action use cases
+  открытия/закрытия регистрации, посадки, прибытия), потому что владельцем
+  состояния перехода является `FlightOccurrence`;
+* агрегат `FlightOccurrence` — единственный авторитет допустимости перехода;
+  дублировать матрицу direction + status в другом контексте нельзя;
+* готовность объявления (резолв шаблона в `AudioSequence`) является
+  **предусловием** перехода: если объявление нельзя подготовить, переход
+  отклоняется и ничего не персистится;
+* переход occurrence и создание `Announcement` фиксируются в **одной локальной
+  транзакции** Core; нельзя сохранить `Announcement` без применённого перехода и
+  наоборот;
+* `Flight Operations` создаёт `Announcement` через принадлежащий ему порт в
+  `FlightOperations\Application\Port\Announcements`; порт возвращает только
+  `announcementId` и нужные скаляры/snapshot;
+* `Announcements` не обращается к write-side `FlightOccurrence` и не мутирует
+  чужой агрегат.
+
+```text
+dispatcher action on FlightOccurrence
+    -> FlightOccurrence transition (authority)  ─┐ одна локальная транзакция
+    -> create Announcement (через порт)         ─┘
+    -> domain events (факты, после коммита)
+    -> RequestAnnouncementPlayback (async, outbox, отдельная граница)
+```
+
+Текущая связь:
+
+```text
+FlightDefinition (шаблон)
+    -> FlightOccurrence (действие диспетчера)
+    -> Announcement
+```
+
+Будущая связь с расписанием:
 
 ```text
 FlightDefinition
     -> FlightSchedule
     -> FlightOccurrence
-    -> Announcement
 ```
 
 ## Gate и CheckInCounter
@@ -423,6 +519,7 @@ FlightDefinition
 * `id`;
 * тип;
 * связанный `flightDefinitionId`;
+* связанный `flightOccurrenceId`, если объявление создано для operational рейса;
 * snapshots выбранных стоек или выхода;
 * непустой упорядоченный набор языков;
 * неизменяемая подготовленная `AudioSequence`;
@@ -462,10 +559,24 @@ FlightDefinition
 Проверка существования и активности `FlightDefinition`, persistence, HTTP API и
 управление через HTTP API реализованы. Frontend относится к следующей задаче.
 
-`Announcements` получает сведения о существовании, активности и направлении
-`FlightDefinition` через принадлежащий ему порт в
-`Announcements/Application/Port/FlightOperations`. Реализация порта
-может читать модель `Flight Operations`, но application и domain слои
+Рейсовое объявление создаётся как часть действия диспетчера над
+`FlightOccurrence`. Оркестрацию ведёт `Flight Operations\Application`: он
+продвигает occurrence и в той же локальной транзакции создаёт `Announcement`
+через принадлежащий `Flight Operations` порт в
+`FlightOperations\Application\Port\Announcements`. Создание объявления является
+предусловием перехода: если шаблон не резолвится в `AudioSequence`, переход
+отклоняется и `Announcement` не создаётся.
+
+`Announcements` остаётся поставщиком: он собирает и сохраняет `Announcement` по
+переданному occurrence-snapshot и возвращает `announcementId` и нужные скаляры.
+`Announcements` не обращается к write-side `FlightOccurrence` и не мутирует чужой
+агрегат. Реализация порта `Flight Operations` располагается в
+`Announcements\Infrastructure\Integration` — поставщик не зависит от порта
+потребителя.
+
+Для справочных сведений `Announcements` использует собственные read-only порты к
+`Flight Operations` и `Audio Catalog` в `Announcements/Application/Port`.
+Реализация порта может читать чужую модель, но application и domain слои
 `Announcements` не используют чужой агрегат, репозиторий или доменные типы
 напрямую.
 
@@ -493,8 +604,12 @@ Flight Operations и Audio Catalog. Snapshots и итоговая последо
 обозначением. Поддерживаемые языки не зашиваются в enum и могут управляться
 конфигурацией или справочником.
 
-После подготовки application layer отправляет integration command
-`RequestAnnouncementPlayback` в `aeroflow-playback`.
+`Announcement` создаётся в Core синхронно и в одной транзакции с переходом
+occurrence. Отправка в playback — отдельная асинхронная граница ниже по течению:
+после коммита application layer публикует integration command
+`RequestAnnouncementPlayback` в `aeroflow-playback` (через outbox), а `PlaybackJob`
+создаётся уже в playback eventual-образом. Нельзя путать эти два «создания»:
+`Announcement` принадлежит Core, `PlaybackJob` — playback.
 
 Для отмены используется `CancelAnnouncementPlayback`.
 
@@ -646,11 +761,15 @@ Integration message пересекает границу сервиса и явл
 Пример:
 
 ```text
-dispatcher selects FlightDefinition
-    -> create Announcement
-    -> AnnouncementPrepared           domain event
-    -> RequestAnnouncementPlayback    integration command
+dispatcher action on FlightOccurrence
+    -> FlightOccurrence transition + create Announcement   одна локальная транзакция
+    -> CheckInOpened / AnnouncementCreated                 domain events (факты)
+    -> RequestAnnouncementPlayback                         integration command (async)
 ```
+
+Domain events перехода описывают уже состоявшийся факт и не запускают создание
+основного объявления. `RequestAnnouncementPlayback` пересекает границу сервиса
+после коммита локальной транзакции.
 
 Требования к integration messages:
 
@@ -668,6 +787,13 @@ dispatcher selects FlightDefinition
 Сильная согласованность требуется только внутри одного агрегата и одной локальной
 транзакции.
 
+Исключение в рамках одного сервиса: запуск рейсового объявления меняет
+`FlightOccurrence` и создаёт `Announcement` в **одной локальной транзакции** Core.
+Это два агрегата двух контекстов, но в модульном монолите с общей БД они
+выражают один неразделимый бизнес-факт, поэтому атомарность здесь — осознанный
+прагматичный выбор, а не сага. Eventual consistency и outbox применяются только
+на настоящей сервисной границе (Core → `aeroflow-playback`).
+
 Между bounded contexts предпочтительно используется eventual consistency.
 Синхронный application-port допустим как явно обоснованное исключение, когда
 текущий use case требует немедленного ответа другого контекста. Такой вызов не
@@ -679,7 +805,8 @@ dispatcher selects FlightDefinition
 заменить без изменения доменной модели.
 
 Optimistic locking следует добавлять агрегатам с конкурентными командами, прежде
-всего будущему `FlightOccurrence` и `PlaybackJob`. Для каталога
+всего `FlightOccurrence` (запуск объявления грузит occurrence на запись) и
+будущему `PlaybackJob`. Для каталога
 `FlightDefinition` это можно сделать при появлении реальных конфликтов редактирования.
 
 ---
@@ -793,10 +920,22 @@ Doctrine и других библиотек.
 
 # Открытые решения
 
+Принятые решения (зафиксированы для occurrence-driven запуска объявлений):
+
+* `FlightOccurrence` вводится до расписания как core-срез operational рейса;
+  ручной диспетчерский поток идёт `FlightDefinition (шаблон) -> FlightOccurrence
+  -> Announcement`;
+* lifecycle вылета и прилёта зафиксирован в разделе `FlightOccurrence`;
+* запуск рейсового объявления оркеструется в `Flight Operations\Application`;
+  `Announcements` создаёт объявление через порт, принадлежащий `Flight
+  Operations`, и не мутирует occurrence;
+* переход occurrence и создание `Announcement` атомарны в одной локальной
+  транзакции Core; готовность объявления — предусловие перехода;
+* форма API — action-эндпоинты над `FlightOccurrence` (см. задачу 011);
+  definition-based путь создания рейсового объявления деприкейтится.
+
 Следующие вопросы должны быть уточнены соответствующим use case до реализации:
 
-* нужен ли `FlightOccurrence` до появления расписания;
-* точный lifecycle конкретного вылета и прибывающего рейса;
 * модель задержки, переноса и отмены рейса;
 * правила конфликтов Gate и CheckInCounter;
 * граница агрегата для AnnouncementTemplate;
