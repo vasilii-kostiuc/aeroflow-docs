@@ -1,6 +1,6 @@
 # Multiple Manual Flight Occurrences Per Day
 
-Status: Ready  
+Status: Done  
 Bounded context: Flight Operations  
 Service: aeroflow-core, aeroflow-web  
 Change type: Domain invariant + Application/API addition + small Frontend
