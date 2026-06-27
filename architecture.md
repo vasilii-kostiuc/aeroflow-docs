@@ -155,9 +155,10 @@ aeroflow-agent
    сохраняется.
 6. `aeroflow-core` атомарно (одна локальная транзакция) переводит occurrence в
    `check_in_open` и сохраняет `Announcement`.
-7. После коммита `aeroflow-core` публикует команду `RequestAnnouncementPlayback`
-   (асинхронно, через outbox).
-8. `aeroflow-playback` создаёт `PlaybackJob`.
+7. После коммита контекст `Announcements` в `aeroflow-core` публикует команду
+   `RequestAnnouncementPlayback` (асинхронно, RabbitMQ; durable outbox отложен —
+   post-commit публикация из application layer).
+8. `aeroflow-playback` создаёт `PlaybackJob` (идемпотентно по `messageId`).
 9. Если очередь свободна, `aeroflow-playback` отправляет команду `PlayAudioSequence` агенту.
 10. `aeroflow-agent` воспроизводит аудио.
 11. После завершения агент отправляет статус выполнения.
