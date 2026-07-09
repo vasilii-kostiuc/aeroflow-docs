@@ -754,8 +754,9 @@ kind + value + languageCode -> audioAssetId
 ## PlaybackJob
 
 Статус: реализован первый тонкий срез в `aeroflow-playback` (приём
-`RequestAnnouncementPlayback` и идемпотентное создание задания). Очередь,
-приоритетное прерывание и emergency mode — следующие срезы, пока планируются.
+`RequestAnnouncementPlayback` и идемпотентное создание задания). Второй срез —
+последовательная приоритетная очередь и жизненный цикл задания (задача 015).
+Приоритетное прерывание и emergency mode — следующие срезы, пока планируются.
 
 `PlaybackJob` не является частью Flight Operations и не содержит аэропортовые
 сущности.
@@ -776,6 +777,39 @@ kind + value + languageCode -> audioAssetId
 Вне первого среза: приоритетная очередь и прерывание, фоновая музыка, повторы,
 emergency mode, `CancelAnnouncementPlayback`, обратные integration events
 playback → core и `aeroflow-agent`.
+
+### Второй срез: очередь и жизненный цикл (задача 015)
+
+Решения второго среза:
+
+* очередь строго последовательная, **без прерывания**: обычные объявления не
+  прерывают друг друга (прерывает только будущий emergency mode); активное
+  задание доигрывается, следующее выбирается после его завершения;
+* порядок выбора: `priority` по убыванию (100 > 50 > 0), при равенстве — FIFO по
+  `createdAt`;
+* single-active инвариант: не более одного задания в статусе `Playing` на один
+  audio output; в первой версии audio output один (глобальный);
+* переходы: `Pending -> Playing -> Completed | Failed`; `Scheduled`,
+  `Interrupted`, `Cancelled` вводятся следующими срезами;
+* `Completed`/`Failed` терминальны; повторное завершение идемпотентно;
+* завершение моделируется application-командой `CompletePlaybackJob` /
+  `FailPlaybackJob` — она представляет факт «audio output сообщил результат».
+  Будущее событие агента `PlaybackCompleted`/`PlaybackFailed` станет источником
+  этой команды без изменения доменной модели. До появления агента команду в
+  тестах подаёт стаб; в проде очередь останавливается на первом `Playing` —
+  осознанное ограничение тонкого среза;
+* outbound-команда агенту (`PlayAudioSequence`) отложена до agent-среза; переход
+  в `Playing` не порождает внешней команды;
+* playback публикует обратные integration events в core:
+  `AnnouncementPlaybackQueued` (создание задания), `AnnouncementPlaybackStarted`
+  (`Pending -> Playing`), `AnnouncementPlaybackCompleted`
+  (`Playing -> Completed`). Контракт нейтрален: `messageId`, `correlationId` =
+  `announcementId`, `announcementId`, `jobId`, `occurredAt`, `schemaVersion`;
+* core-сторона минимальна: `Announcements` идемпотентно (по `messageId`)
+  принимает события и фиксирует факт приёма; статусы `Announcement` не меняются
+  (расширение его жизненного цикла — отдельная задача);
+* фоновая музыка: приоритет `0` остаётся правилом порядка; продюсера музыки и
+  idle-состояния нет.
 
 Состояние:
 
