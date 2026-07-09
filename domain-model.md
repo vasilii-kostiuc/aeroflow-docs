@@ -753,10 +753,9 @@ kind + value + languageCode -> audioAssetId
 
 ## PlaybackJob
 
-Статус: планируемый aggregate root в `aeroflow-playback`. Вводится первым тонким
-срезом интеграции Core → Playback (только приём `RequestAnnouncementPlayback` и
-создание задания); очередь, приоритетное прерывание и emergency mode — следующие
-срезы.
+Статус: реализован первый тонкий срез в `aeroflow-playback` (приём
+`RequestAnnouncementPlayback` и идемпотентное создание задания). Очередь,
+приоритетное прерывание и emergency mode — следующие срезы, пока планируются.
 
 `PlaybackJob` не является частью Flight Operations и не содержит аэропортовые
 сущности.

@@ -246,6 +246,11 @@ Cancelled
 Failed
 ```
 
+Первый срез интеграции реализован: после запуска рейсового объявления
+`aeroflow-core` публикует `RequestAnnouncementPlayback` в RabbitMQ, а
+`aeroflow-playback` идемпотентно создаёт `PlaybackJob` в статусе `Pending`.
+Очередь, приоритеты, повторы и emergency mode — следующие срезы.
+
 ---
 
 # Поддержка старой САО
