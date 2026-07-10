@@ -753,10 +753,11 @@ kind + value + languageCode -> audioAssetId
 
 ## PlaybackJob
 
-Статус: реализован первый тонкий срез в `aeroflow-playback` (приём
-`RequestAnnouncementPlayback` и идемпотентное создание задания). Второй срез —
-последовательная приоритетная очередь и жизненный цикл задания (задача 015).
-Приоритетное прерывание и emergency mode — следующие срезы, пока планируются.
+Статус: реализованы первый и второй тонкие срезы в `aeroflow-playback`. Первый —
+приём `RequestAnnouncementPlayback` и идемпотентное создание задания. Второй
+(задача 015) — последовательная приоритетная очередь, жизненный цикл задания и
+обратные integration events в core. Приоритетное прерывание, emergency mode и
+`aeroflow-agent` — следующие срезы, пока планируются.
 
 `PlaybackJob` не является частью Flight Operations и не содержит аэропортовые
 сущности.
@@ -778,7 +779,7 @@ kind + value + languageCode -> audioAssetId
 emergency mode, `CancelAnnouncementPlayback`, обратные integration events
 playback → core и `aeroflow-agent`.
 
-### Второй срез: очередь и жизненный цикл (задача 015)
+### Второй срез: очередь и жизненный цикл (задача 015, реализован)
 
 Решения второго среза:
 
@@ -803,8 +804,10 @@ playback → core и `aeroflow-agent`.
 * playback публикует обратные integration events в core:
   `AnnouncementPlaybackQueued` (создание задания), `AnnouncementPlaybackStarted`
   (`Pending -> Playing`), `AnnouncementPlaybackCompleted`
-  (`Playing -> Completed`). Контракт нейтрален: `messageId`, `correlationId` =
-  `announcementId`, `announcementId`, `jobId`, `occurredAt`, `schemaVersion`;
+  (`Playing -> Completed`). Контракт нейтрален: `event` (дискриминатор факта в
+  теле сообщения — получатель не зависит от PHP-классов издателя), `messageId`,
+  `correlationId` = `announcementId`, `announcementId`, `jobId`, `occurredAt`,
+  `schemaVersion`;
 * core-сторона минимальна: `Announcements` идемпотентно (по `messageId`)
   принимает события и фиксирует факт приёма; статусы `Announcement` не меняются
   (расширение его жизненного цикла — отдельная задача);
@@ -1064,6 +1067,12 @@ Doctrine и других библиотек.
   различения прогонов; при
   появлении `FlightSchedule` идентичность occurrence пересматривается в пользу
   времени вылета (`operationalDateTime`), а синтетический счётчик может быть снят.
+* дискриминация входящих integration messages — ADR 002
+  (`adr/002-inbound-message-discrimination.md`): дискриминатор типа — поле в теле
+  сообщения (`command` для команд, `event` для событий), вводится при появлении
+  второго типа на одной очереди (срез `CancelAnnouncementPlayback`);
+  emergency-команды получают отдельный транспорт; registry декодеров заранее не
+  вводится.
 
 Следующие вопросы должны быть уточнены соответствующим use case до реализации:
 

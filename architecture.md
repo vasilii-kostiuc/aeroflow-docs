@@ -238,6 +238,12 @@ aeroflow-agent
 * EmergencyModeActivated
 * EmergencyModeDeactivated
 
+Обратный поток реализован для `Queued`, `Started` и `Completed`: playback
+публикует их в RabbitMQ (очередь `playback_events`) после коммита своей локальной
+транзакции, а `aeroflow-core` идемпотентно (по `messageId`) фиксирует факт приёма.
+Статусы `Announcement` по этим событиям пока не меняются. Тело события несёт
+дискриминатор `event`, поэтому получатель не зависит от PHP-классов издателя.
+
 ---
 
 # Очередь воспроизведения

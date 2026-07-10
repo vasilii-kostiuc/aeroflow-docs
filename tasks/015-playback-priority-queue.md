@@ -1,6 +1,6 @@
 # Playback: приоритетная очередь и жизненный цикл задания
 
-Status: Ready
+Status: Done
 Bounded context: Playback (aeroflow-playback), Announcements (Core) — только приём событий
 Service: aeroflow-playback, aeroflow-core
 Change type: Domain, Application, Infrastructure, Integration, Migration
@@ -195,13 +195,13 @@ Manual QA:
 
 ## Documentation Updates
 
-До реализации зафиксировать в `aeroflow-docs`:
+Выполнено:
 
-* `domain-model.md` — перевести соответствующую часть `PlaybackJob` (жизненный
-  цикл, dispatcher, single-active) в реализованную модель; описать обратные
-  integration events и зафиксировать, что статусы `Announcement` по ним пока не
-  меняются (решение #7);
-* `architecture.md` — уточнить обратный поток Playback -> Core;
-* `README.md` — отметить, что задание доигрывается и core получает результат.
-
-После реализации — перевести статус задачи в Done и обновить перечисленное выше.
+* `domain-model.md` — решения второго среза зафиксированы до реализации; после
+  реализации срез отмечен реализованным. Контракт обратных событий дополнен
+  полем `event` (дискриминатор факта в теле сообщения — получатель не зависит от
+  PHP-классов издателя);
+* `architecture.md` — уточнён реализованный обратный поток Playback -> Core
+  (очередь `playback_events`, идемпотентная фиксация приёма, статусы
+  `Announcement` не меняются);
+* `README.md` — отмечено, что задание доигрывается и core получает результат.

@@ -246,10 +246,13 @@ Cancelled
 Failed
 ```
 
-Первый срез интеграции реализован: после запуска рейсового объявления
+Первые два среза интеграции реализованы: после запуска рейсового объявления
 `aeroflow-core` публикует `RequestAnnouncementPlayback` в RabbitMQ, а
-`aeroflow-playback` идемпотентно создаёт `PlaybackJob` в статусе `Pending`.
-Очередь, приоритеты, повторы и emergency mode — следующие срезы.
+`aeroflow-playback` идемпотентно создаёт `PlaybackJob` и ведёт строго
+последовательную очередь по приоритету (без прерывания). Задание проходит
+`Pending -> Playing -> Completed | Failed`, а core получает обратные события
+`Queued`/`Started`/`Completed`. До появления `aeroflow-agent` завершение задания
+сообщает оператор (стаб). Прерывание, повторы и emergency mode — следующие срезы.
 
 ---
 
