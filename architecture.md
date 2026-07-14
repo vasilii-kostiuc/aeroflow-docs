@@ -218,6 +218,13 @@ aeroflow-agent
 * ResumePlayback
 * SetVolume
 
+Транспорт зафиксирован: RabbitMQ в обе стороны (очереди `agent_commands` и
+`agent_events`, дискриминаторы `command`/`event` в теле — ADR 002). Первый срез
+(задача 016) реализует `PlayAudioSequence` и события started/completed/failed;
+остальные команды — следующие срезы. Аудиофайлы агент получает по
+download-контракту core (`GET /internal/v1/audio-assets/{id}/file`) и кэширует
+локально по `audioAssetId`.
+
 ## Agent → Playback
 
 Примеры событий:

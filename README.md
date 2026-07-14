@@ -133,7 +133,7 @@ RabbitMQ
      ↓
 aeroflow-playback
      ↓
-RabbitMQ / WebSocket / HTTP
+RabbitMQ
      ↓
 aeroflow-agent
 ```
@@ -246,13 +246,15 @@ Cancelled
 Failed
 ```
 
-Первые два среза интеграции реализованы: после запуска рейсового объявления
+Первые три среза интеграции реализованы: после запуска рейсового объявления
 `aeroflow-core` публикует `RequestAnnouncementPlayback` в RabbitMQ, а
 `aeroflow-playback` идемпотентно создаёт `PlaybackJob` и ведёт строго
 последовательную очередь по приоритету (без прерывания). Задание проходит
-`Pending -> Playing -> Completed | Failed`, а core получает обратные события
-`Queued`/`Started`/`Completed`. До появления `aeroflow-agent` завершение задания
-сообщает оператор (стаб). Прерывание, повторы и emergency mode — следующие срезы.
+`Pending -> Playing -> Completed | Failed`, `aeroflow-agent` скачивает аудиофайлы
+у core, физически воспроизводит последовательность и сообщает результат, а core
+получает обратные события `Queued`/`Started`/`Completed`. Операторский стаб
+завершения остаётся аварийным инструментом. Прерывание, повторы, stop/pause и
+emergency mode — следующие срезы.
 
 ---
 

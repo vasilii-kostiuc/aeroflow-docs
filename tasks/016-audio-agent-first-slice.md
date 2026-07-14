@@ -1,6 +1,6 @@
 # Audio Agent: первый срез исполнения воспроизведения
 
-Status: Ready
+Status: Done
 Bounded context: Audio Execution (aeroflow-agent), Playback (aeroflow-playback),
 Audio Catalog (aeroflow-core — только download-контракт)
 Service: aeroflow-agent (новый), aeroflow-playback, aeroflow-core
@@ -232,9 +232,12 @@ Manual QA:
 
 ## Documentation Updates
 
-До реализации: этот документ. После реализации:
+Выполнено:
 
-* `domain-model.md` — Audio Execution: первый срез реализован; транспорт агента
-  зафиксирован (RabbitMQ); download-контракт Audio Catalog реализован;
-* `architecture.md` — закрыть открытый вопрос транспорта Playback → Agent;
-* `README.md` — цепочка доходит до реального аудиовыхода.
+* `domain-model.md` — Audio Execution: первый срез реализован, решения
+  зафиксированы (стек, транспорт, download-контракт, дедуп без БД, шов
+  Complete/Fail);
+* `architecture.md` — транспорт Playback → Agent зафиксирован (RabbitMQ,
+  `agent_commands`/`agent_events`), download-контракт описан;
+* `README.md` — цепочка доходит до реального аудиовыхода; стаб остаётся
+  аварийным инструментом.
