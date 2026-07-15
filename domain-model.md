@@ -826,13 +826,18 @@ playback → core и `aeroflow-agent`.
 * playback публикует обратные integration events в core:
   `AnnouncementPlaybackQueued` (создание задания), `AnnouncementPlaybackStarted`
   (`Pending -> Playing`), `AnnouncementPlaybackCompleted`
-  (`Playing -> Completed`). Контракт нейтрален: `event` (дискриминатор факта в
-  теле сообщения — получатель не зависит от PHP-классов издателя), `messageId`,
-  `correlationId` = `announcementId`, `announcementId`, `jobId`, `occurredAt`,
-  `schemaVersion`;
+  (`Playing -> Completed`) и `AnnouncementPlaybackFailed`
+  (`Playing -> Failed`, с `reason`; добавлено задачей 017 — без него упавшее
+  задание навсегда выглядело бы играющим на экране очереди). Контракт нейтрален:
+  `event` (дискриминатор факта в теле сообщения — получатель не зависит от
+  PHP-классов издателя), `messageId`, `correlationId` = `announcementId`,
+  `announcementId`, `jobId`, `occurredAt`, `schemaVersion`;
 * core-сторона минимальна: `Announcements` идемпотентно (по `messageId`)
   принимает события и фиксирует факт приёма; статусы `Announcement` не меняются
-  (расширение его жизненного цикла — отдельная задача);
+  (расширение его жизненного цикла — отдельная задача). Поверх receipts построен
+  локальный CQRS-read `ListPlaybackQueue` (задача 017): экран очереди диспетчера
+  (наследник окна «Статус» старой САО) — играющее, ожидающие, недавние; playback
+  остаётся источником истины порядка, read-модель eventual;
 * фоновая музыка: приоритет `0` остаётся правилом порядка; продюсера музыки и
   idle-состояния нет.
 

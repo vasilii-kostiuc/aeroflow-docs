@@ -1,6 +1,6 @@
 # Экран очереди воспроизведения (наследник окна «Статус»)
 
-Status: Ready
+Status: Done
 Bounded context: Announcements (Core, read-модель), Playback (aeroflow-playback,
 событие failed), dispatcher feature (aeroflow-web)
 Service: aeroflow-core, aeroflow-playback, aeroflow-web
@@ -147,9 +147,10 @@ Manual QA: запустить два объявления подряд, откр
 
 ## Documentation Updates
 
-После реализации:
+Выполнено:
 
-* `domain-model.md` — обратные события: добавить `Failed` в реализованные;
-  зафиксировать read `ListPlaybackQueue`;
-* `architecture.md` — обратный поток: `Failed` реализован;
-* `README.md` — упомянуть экран очереди диспетчера.
+* `domain-model.md` — `Failed` добавлен в реализованные обратные события
+  (с `reason`); зафиксирован read `ListPlaybackQueue`;
+* `architecture.md` — обратный поток: `Failed` реализован, упомянута read-модель
+  экрана очереди;
+* `README.md` — упомянут экран очереди диспетчера (кнопка «Статус»).

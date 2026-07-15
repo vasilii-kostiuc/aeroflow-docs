@@ -245,10 +245,12 @@ download-контракту core (`GET /internal/v1/audio-assets/{id}/file`) и 
 * EmergencyModeActivated
 * EmergencyModeDeactivated
 
-Обратный поток реализован для `Queued`, `Started` и `Completed`: playback
-публикует их в RabbitMQ (очередь `playback_events`) после коммита своей локальной
-транзакции, а `aeroflow-core` идемпотентно (по `messageId`) фиксирует факт приёма.
-Статусы `Announcement` по этим событиям пока не меняются. Тело события несёт
+Обратный поток реализован для `Queued`, `Started`, `Completed` и `Failed`
+(последний несёт `reason`): playback публикует их в RabbitMQ (очередь
+`playback_events`) после коммита своей локальной транзакции, а `aeroflow-core`
+идемпотентно (по `messageId`) фиксирует факт приёма. Статусы `Announcement` по
+этим событиям пока не меняются; поверх receipts core строит read-модель экрана
+очереди диспетчера (`GET /api/v1/dispatcher/playback-queue`). Тело события несёт
 дискриминатор `event`, поэтому получатель не зависит от PHP-классов издателя.
 
 ---
