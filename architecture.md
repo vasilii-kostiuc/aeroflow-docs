@@ -208,6 +208,12 @@ aeroflow-agent
 * ActivateEmergencyMode
 * DeactivateEmergencyMode
 
+Реализованы `RequestAnnouncementPlayback` и `CancelAnnouncementPlayback` (задача
+018): обе идут одной очередью `announcement_playback` и различаются полем
+`command` в теле сообщения (ADR 002). Отмену публикует core после отмены
+`Announcement`; playback отменяет только ещё не начатое задание — остановка
+текущего звука и emergency-команды остаются следующими срезами.
+
 ## Playback → Agent
 
 Примеры команд:
@@ -245,8 +251,8 @@ download-контракту core (`GET /internal/v1/audio-assets/{id}/file`) и 
 * EmergencyModeActivated
 * EmergencyModeDeactivated
 
-Обратный поток реализован для `Queued`, `Started`, `Completed` и `Failed`
-(последний несёт `reason`): playback публикует их в RabbitMQ (очередь
+Обратный поток реализован для `Queued`, `Started`, `Completed`, `Failed`
+(последний несёт `reason`) и `Cancelled`: playback публикует их в RabbitMQ (очередь
 `playback_events`) после коммита своей локальной транзакции, а `aeroflow-core`
 идемпотентно (по `messageId`) фиксирует факт приёма. Статусы `Announcement` по
 этим событиям пока не меняются; поверх receipts core строит read-модель экрана

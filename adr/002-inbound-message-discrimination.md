@@ -1,6 +1,7 @@
 # ADR 002: Дискриминация входящих сообщений между сервисами
 
-Status: Accepted
+Status: Accepted (уровни 1 и 3 реализованы задачей 018 — срез
+`CancelAnnouncementPlayback`; уровень 2 ждёт emergency-среза)
 Date: 2026-07-10
 
 ## Context
