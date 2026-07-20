@@ -208,11 +208,14 @@ aeroflow-agent
 * ActivateEmergencyMode
 * DeactivateEmergencyMode
 
-Реализованы `RequestAnnouncementPlayback` и `CancelAnnouncementPlayback` (задача
-018): обе идут одной очередью `announcement_playback` и различаются полем
-`command` в теле сообщения (ADR 002). Отмену публикует core после отмены
-`Announcement`; playback отменяет только ещё не начатое задание — остановка
-текущего звука и emergency-команды остаются следующими срезами.
+Реализованы `RequestAnnouncementPlayback`, `CancelAnnouncementPlayback` (задача
+018) и `StopAnnouncementPlayback` (задача 019): все три идут одной очередью
+`announcement_playback` и различаются полем `command` в теле сообщения
+(ADR 002). Отмену публикует core после отмены `Announcement`; playback
+отменяет только ещё не начатое задание. Stop — нейтральная операторская команда:
+`Announcement` не меняется, playback просит агента остановить физически
+звучащее задание и переводит job в `Interrupted` только по факту от агента.
+Emergency-команды остаются следующим срезом.
 
 ## Playback → Agent
 
@@ -226,10 +229,15 @@ aeroflow-agent
 
 Транспорт зафиксирован: RabbitMQ в обе стороны (очереди `agent_commands` и
 `agent_events`, дискриминаторы `command`/`event` в теле — ADR 002). Первый срез
-(задача 016) реализует `PlayAudioSequence` и события started/completed/failed;
-остальные команды — следующие срезы. Аудиофайлы агент получает по
-download-контракту core (`GET /internal/v1/audio-assets/{id}/file`) и кэширует
-локально по `audioAssetId`.
+(задача 016) реализует `PlayAudioSequence` и события started/completed/failed.
+Второй срез (задача 019) добавляет `audio.stop`: агент подтверждает play после
+запуска фонового воспроизведения и хранит один активный `jobId` с
+`CancellationTokenSource`, так что `audio.stop` не встаёт за долгим
+`play_sequence`; отмена процесса плеера не ошибка, а публикует
+`audio.playback_interrupted`. `PausePlayback`, `ResumePlayback` и `SetVolume`
+остаются следующими срезами. Аудиофайлы агент получает по download-контракту
+core (`GET /internal/v1/audio-assets/{id}/file`) и кэширует локально по
+`audioAssetId`.
 
 ## Agent → Playback
 
@@ -252,12 +260,14 @@ download-контракту core (`GET /internal/v1/audio-assets/{id}/file`) и 
 * EmergencyModeDeactivated
 
 Обратный поток реализован для `Queued`, `Started`, `Completed`, `Failed`
-(последний несёт `reason`) и `Cancelled`: playback публикует их в RabbitMQ (очередь
-`playback_events`) после коммита своей локальной транзакции, а `aeroflow-core`
-идемпотентно (по `messageId`) фиксирует факт приёма. Статусы `Announcement` по
-этим событиям пока не меняются; поверх receipts core строит read-модель экрана
-очереди диспетчера (`GET /api/v1/dispatcher/playback-queue`). Тело события несёт
-дискриминатор `event`, поэтому получатель не зависит от PHP-классов издателя.
+(последний несёт `reason`), `Cancelled` и `Interrupted` (задача 019 —
+подтверждение агентом физической остановки звучащего задания): playback
+публикует их в RabbitMQ (очередь `playback_events`) после коммита своей
+локальной транзакции, а `aeroflow-core` идемпотентно (по `messageId`) фиксирует
+факт приёма. Статусы `Announcement` по этим событиям пока не меняются; поверх
+receipts core строит read-модель экрана очереди диспетчера
+(`GET /api/v1/dispatcher/playback-queue`). Тело события несёт дискриминатор
+`event`, поэтому получатель не зависит от PHP-классов издателя.
 
 ---
 

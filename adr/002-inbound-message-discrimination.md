@@ -1,7 +1,8 @@
 # ADR 002: Дискриминация входящих сообщений между сервисами
 
 Status: Accepted (уровни 1 и 3 реализованы задачей 018 — срез
-`CancelAnnouncementPlayback`; уровень 2 ждёт emergency-среза)
+`CancelAnnouncementPlayback`, и задачей 019 — срез `StopAnnouncementPlayback`;
+уровень 2 ждёт emergency-среза)
 Date: 2026-07-10
 
 ## Context
@@ -58,6 +59,10 @@ serializer или message handler.
 * Срез `CancelAnnouncementPlayback` обязан: добавить `command` в контракт запроса
   и отмены, обновить издателя в core, заменить безусловное построение в
   `AnnouncementPlaybackSerializer` на `match` с ошибкой на неизвестный `command`.
+* Срез `StopAnnouncementPlayback` (задача 019) добавил третий тип на ту же
+  очередь тем же способом — новая ветка `match` в уже существующем
+  сериализаторе, без registry. Подтверждает прогноз уровня 3: потолок в четыре
+  типа с `match` держится, реестр decoders не понадобился.
 * Срез emergency mode обязан завести отдельный транспорт, а не подмешивать команды
   в общую очередь.
 * Исходящая сторона уже соответствует этому решению (поле `event`) и не меняется.
