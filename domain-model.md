@@ -809,7 +809,11 @@ Domain event:
 
 ## Генерация assets через TTS
 
-Статус: решение принято, реализация — отдельным таском.
+Статус: первый срез реализован (задача 021) — сервис `aeroflow-tts`, порт
+`TextToSpeechPort`, use case `GenerateAudioAsset`, `AudioAsset(source=generated)`,
+кэш в Core и ручной admin-эндпоинт `POST /admin/audio-assets:generate`.
+Автоматическое подключение к сохранению `text`-сегмента конфигурации —
+следующий срез (задача 022).
 
 `AudioAsset` со `source = generated` создаётся синтезом речи из текста. Это
 закрывает уже существующий разрыв: сегмент `text` в `AnnouncementVariant`

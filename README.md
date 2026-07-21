@@ -15,6 +15,7 @@ aeroflow-core        # Symfony backend, бизнес-логика
 aeroflow-web         # React + Mantine, интерфейс администратора и диспетчера
 aeroflow-playback    # сервис очереди и управления воспроизведением
 aeroflow-agent       # локальный аудио-агент
+aeroflow-tts         # stateless-сервис синтеза речи (text -> wav)
 ```
 
 ---
