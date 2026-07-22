@@ -1,6 +1,6 @@
 # TTS-генерация текстовых сегментов конфигурации объявления
 
-Status: Planned
+Status: Done
 Bounded context: Announcements (сегмент `text` получает сгенерированный asset,
 оркестрация генерации при сохранении), Audio Catalog (генерация — уже готова,
 задача 021)
@@ -171,16 +171,50 @@ playback `AudioSequence` со сгенерированным asset в нужно
 сохранить тот же текст — TTS не вызывается (кэш). Остановить `aeroflow-tts` и
 сохранить новый текст — `502`, конфиг не портится.
 
+## Итог реализации
+
+Выполнено:
+
+* переиспользована существующая колонка `audio_asset_id` для `text`-сегмента —
+  **миграция не понадобилась**; `AnnouncementTemplateSegment::text()` принимает
+  опциональный `audioAssetId`, `createSegment` пробрасывает его из данных.
+* порт `SpeechAssetGeneratorInterface` (`generate(text, languageCode)`,
+  дефолтный голос — `voice` не выставлен) + адаптер
+  `AudioCatalogSpeechAssetGenerator` (делегирует `GenerateAudioAssetCommand`
+  через `ApplicationBus`); DI-алиас в `services.yaml`.
+* оркестрация — сервис `TextSegmentSpeechResolver`, вызываемый в
+  `Add`/`UpdateAnnouncementVariantHandler` после валидации и до `addVariant`:
+  для каждого непустого `text`-сегмента синтезирует речь и обогащает массив
+  `audioAssetId`. Падение TTS → сохранение варианта падает (502/422), сегмент не
+  сохраняется полусырым.
+* `FlightAnnouncementConfig::validationErrors()` неготов по `text` только при
+  неразрешённом сегменте (`AnnouncementVariant::isTtsSegmentsResolved()`);
+  `AnnouncementTemplateResolver` для `text` отдаёт `audio_asset` из
+  `audioAssetId` (пустой → not-ready, неактивный → `AudioAssetUnavailableException`).
+* кэш-повтор специально **не** тестируется на уровне 022 (за портом кэша нет) —
+  гарантию даёт unit-тест 021 `GenerateAudioAssetHandlerTest::testReusesCachedAssetWithoutSynthesizing`.
+* тесты: `TextSegmentSpeechResolverTest`, расширенные
+  `AnnouncementTemplateResolverTest` (text→asset, неактивный→ошибка) и
+  `FlightAnnouncementConfigTest` (resolved text готов),
+  `Add`/`UpdateAnnouncementVariantHandlerTest` (генерация вызвана, `audioAssetId`
+  сохранён). Полный `tests/Unit tests/Application` — зелёный (173).
+* **aeroflow-web не менялся**: редактор `FlightAnnouncementConfigsPanel` уже
+  поддерживает `text`-сегменты, шлёт текст без `audioAssetId` (бэкенд проставляет
+  сам) и показывает `422`/`text_segment_requires_tts` существующими средствами.
+
+Известное ограничение (вне среза): апгрейд модели голоса не перегенерирует уже
+сохранённые `text`-сегменты автоматически — подхватится при следующем сохранении
+варианта (как и в 021).
+
 ## Documentation Updates
 
-При реализации:
+Выполнено:
 
-* `domain-model.md` — раздел `Announcements`: `text`-сегмент несёт resolved
-  `audioAssetId`, генерируемый при сохранении через порт к Audio Catalog; убрать
-  формулировку, что `text` безусловно делает конфиг неготовым (теперь — только без
-  резолва); отметить, что автогенерация из конфига реализована (снять из Out of
-  scope раздела «Генерация assets через TTS»).
-* `architecture.md` — при необходимости уточнить, что подготовка `AudioSequence`
-  включает уже сгенерированный из текста asset.
-* `aeroflow-web/architecture.md` — если затронут редактор: text-сегмент
-  озвучивается при сохранении, ошибка TTS показывается как `422`.
+* `domain-model.md` — раздел «Генерация assets через TTS» и `Announcements`:
+  статус «реализовано», `text`-сегмент несёт `audioAssetId` (генерируется при
+  сохранении через `SpeechAssetGeneratorInterface`), формулировка «text
+  безусловно неготов» заменена на «неготов только без резолва».
+* `architecture.md` — существующее описание подготовки `AudioSequence` остаётся
+  верным (готовый asset из текста ничем не отличается от прочих).
+* `aeroflow-web/architecture.md` — без изменений: редактор конфигов вне скоупа
+  правок (существующая обработка text-сегментов и ошибок достаточна).

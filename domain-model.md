@@ -689,8 +689,12 @@ FlightDefinition
 * `pause`;
 * `text`.
 
-Реализованные dynamic slots: `check_in_counters` и `gate_code`. Текст хранится
-как утверждённое содержимое, но без TTS делает конфигурацию неготовой.
+Реализованные dynamic slots: `check_in_counters` и `gate_code`. `text`-сегмент
+хранит утверждённое содержимое и озвучивается при сохранении варианта (задача
+022): `Announcements` синтезирует речь через `SpeechAssetGeneratorInterface` и
+проставляет сегменту `audioAssetId` (та же колонка, что у `audio_asset`).
+Неозвученный `text`-сегмент (без `audioAssetId`) по-прежнему делает конфигурацию
+неготовой — это признак «ещё не сгенерирован», а не «TTS невозможен».
 
 `Announcements` предоставляет read-only запрос настроенных языков объявления для
 пары рейс × тип (`ListConfiguredAnnouncementLanguages`): он возвращает коды
@@ -809,11 +813,15 @@ Domain event:
 
 ## Генерация assets через TTS
 
-Статус: первый срез реализован (задача 021) — сервис `aeroflow-tts`, порт
+Статус: реализовано. Задача 021 — сервис `aeroflow-tts`, порт
 `TextToSpeechPort`, use case `GenerateAudioAsset`, `AudioAsset(source=generated)`,
-кэш в Core и ручной admin-эндпоинт `POST /admin/audio-assets:generate`.
-Автоматическое подключение к сохранению `text`-сегмента конфигурации —
-следующий срез (задача 022).
+кэш в Core и ручной admin-эндпоинт `POST /admin/audio-assets:generate`. Задача
+022 — автоматическое подключение к сохранению `text`-сегмента конфигурации:
+`Announcements` при сохранении варианта (`Add`/`UpdateAnnouncementVariant`)
+синтезирует речь через собственный порт `SpeechAssetGeneratorInterface` (адаптер
+делегирует `GenerateAudioAssetCommand`) и сохраняет `text`-сегмент с проставленным
+`audioAssetId`; резолвер отдаёт этот asset в `AudioSequence`, а не отклоняет
+конфиг.
 
 `AudioAsset` со `source = generated` создаётся синтезом речи из текста. Это
 закрывает уже существующий разрыв: сегмент `text` в `AnnouncementVariant`
