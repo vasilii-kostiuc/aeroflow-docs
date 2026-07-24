@@ -609,7 +609,8 @@ FlightDefinition
 
 * `id`;
 * тип;
-* связанный `flightDefinitionId`;
+* связанный `flightDefinitionId` — **nullable**: у рейсовых типов задан, у
+  аэропортового `supplementary` всегда `null` (задача 024);
 * связанный `flightOccurrenceId`, если объявление создано для operational рейса;
 * snapshots выбранных стоек или выхода;
 * непустой упорядоченный набор языков;
@@ -626,12 +627,21 @@ FlightDefinition
 * продолжение регистрации (единственный повторяемый тип, задача 020);
 * окончание регистрации;
 * приглашение на посадку;
-* прибытие.
+* прибытие;
+* дополнительное (`supplementary`, задача 024) — единственный не-рейсовый
+  (аэропортовый) тип: без рейса, стоек и выхода.
+
+Приоритет воспроизведения выводится из типа (`AnnouncementType::playbackPriority()`),
+а не из константы издателя: рейсовые типы — `100`, `supplementary` — `50`. Метод
+`requiresFlight()` отличает пять рейсовых типов (`true`) от `supplementary`
+(`false`).
 
 Реализованные инварианты:
 
 * рейсовой тип содержит идентификатор `FlightDefinition`, но не ORM-связь или
-  объект другого агрегата;
+  объект другого агрегата; аэропортовый `supplementary` не содержит
+  `flightDefinitionId` (создание рейсового типа без него отклоняется, а
+  `supplementary` с ним — тоже отклоняется);
 * принадлежность объявления к рейсу или всему аэропорту определяется его типом,
   без отдельного `AnnouncementSubject`;
 * ссылка на рейс неизменяема после создания;
@@ -659,6 +669,43 @@ FlightDefinition
 
 Проверка существования и активности `FlightDefinition`, persistence, HTTP API и
 управление через HTTP API реализованы. Frontend относится к следующей задаче.
+
+Дополнительное объявление (`supplementary`, задача 024) создаётся иначе — вне
+`FlightOccurrence`. Это первый аэропортовый (не-рейсовый) путь и фундамент
+core-стороны будущего emergency-режима. Оно запускается из **пресета**, а не из
+свободного текста — так работал раздел «Дополнительно» старой САО (заранее
+записанные сообщения: грипп, такси, безопасность, коридор, …), см.
+`legacy-sao-user-guide.md`. Пресет — это отдельный aggregate root
+`SupplementaryAnnouncementTemplate` (`Announcements\Domain`): семантическое имя,
+признак активности и языковые варианты `{languageCode -> audioAssetId}`; аудио
+готовится заранее (загрузка WAV или генерация задачей 021), поэтому TTS **не**
+попадает на путь запуска. Админ управляет каталогом пресетов
+(`/api/v1/admin/supplementary-announcement-templates`, CRUD + активация/деактивация
+в стиле `AudioPrompt`); диспетчер видит активные пресеты
+(`GET /api/v1/dispatcher/supplementary-announcements/templates`).
+
+Запуск — dispatcher-эндпоинт
+`POST /api/v1/dispatcher/supplementary-announcements { templateId, languages }` и
+use case `LaunchSupplementaryAnnouncement` (`Announcements\Application`): он грузит
+пресет (должен быть активен), берёт его assets для выбранных языков (пустой список
+= все языки пресета), проверяет, что каждый asset ещё активен (иначе
+`AudioAssetUnavailableException`), собирает неизменяемую `AudioSequence` и создаёт
+`Announcement(type=supplementary, flightDefinitionId=null)`. В первом срезе — один
+пресет за запуск; мультивыбор с явным порядком (как в старой САО) — возможное
+расширение. Оркестратор `Flight Operations`, `FlightOccurrence` и его порт не
+участвуют. Пост-коммит публикация `RequestAnnouncementPlayback` (с `priority: 50`)
+идёт тем же механизмом на `AnnouncementCreated`, что и у рейсовых объявлений.
+`AnnouncementCreated.flightDefinitionId` стал `?string`, а его приёмники
+(`PublishAnnouncementPlaybackRequest`, read-модель очереди) не полагаются на
+ненулёвость.
+
+`SupplementaryAnnouncementTemplate` хранит языковые варианты как JSON-коллекцию
+value-объектов (тот же прагматичный выбор, что `Announcement.audioSequence`), а не
+дерево дочерних сущностей. Инварианты: непустое имя, хотя бы один вариант, языки
+без дубликатов, каждый вариант ссылается на существующий активный `AudioAsset`
+(межагрегатная проверка — в application через порт `AudioPromptLookupInterface`).
+События: `SupplementaryTemplateCreated`, `SupplementaryTemplateUpdated`,
+`SupplementaryTemplateActivated`, `SupplementaryTemplateDeactivated`.
 
 Рейсовое объявление создаётся как часть действия диспетчера над
 `FlightOccurrence`. Оркестрацию ведёт `Flight Operations\Application`: он
@@ -865,6 +912,12 @@ Domain event:
 **не новый bounded context**: у него нет своего домена, агрегатов и БД. Он
 дополняет Audio Catalog возможностью генерации, как download-контракт дополняет
 его раздачей файлов.
+
+Помимо внутреннего download-контракта агента (`GET /internal/v1/audio-assets/{id}/file`,
+без auth) есть параллельный **авторизованный** эндпоинт под `/api/v1` —
+`GET /api/v1/admin/audio-assets/{id}/file` — тем же потоковым чтением через
+`AudioAssetStorageInterface`, но с JWT: он нужен для прослушивания asset прямо в
+браузере (админ проверяет озвучку до привязки её к пресету или шаблону рейса).
 
 ## AudioPrompt
 
@@ -1440,6 +1493,24 @@ Doctrine и других библиотек.
   сохранении текста конфигурации; кэш и идемпотентность по хешу текста — в Core;
   движок и стек сервиса — деталь реализации за HTTP-контрактом (см. раздел
   «Генерация assets через TTS»). Реализация — отдельным таском.
+* дополнительное объявление (реализовано, задача 024): `supplementary` —
+  не-рейсовый `Announcement(flightDefinitionId=null)`, отличается типом (без
+  `AnnouncementSubject`); приоритет выводится из типа (`playbackPriority()`: `50`);
+  playback не меняется на уровне домена (только приоритет в контракте). Запуск идёт
+  **из пресета**, а не из ad-hoc текста — воспроизводит рабочий сценарий раздела
+  «Дополнительно» старой САО. Пресет — отдельный aggregate root
+  `SupplementaryAnnouncementTemplate` (имя + языковые варианты `languageCode ->
+  audioAssetId`), управляемый админом; аудио готовится заранее, поэтому TTS **не**
+  на пути запуска. Первый срез — один пресет за запуск; мультивыбор с явным порядком
+  — возможное расширение. Это первый аэропортовый путь и фундамент core-стороны
+  emergency-режима. (Пересматривает первоначальный ad-hoc-text вариант задачи 024
+  после сверки с `legacy-sao-user-guide.md`.)
+* приоритетное прерывание (преемпция) для emergency (задача 026, ещё не
+  реализовано, зафиксировано здесь как принятое направление): экстренное
+  объявление (`1000`) прерывает звучащее обычное задание, которое переходит в
+  **новый статус `Preempted` и затем re-queue** (возврат в очередь), а не
+  теряется; глобальная приостановка обычной очереди и отдельный emergency-транспорт
+  (ADR 002, уровень 2) — часть того же будущего среза.
 
 Следующие вопросы должны быть уточнены соответствующим use case до реализации:
 
