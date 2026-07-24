@@ -221,6 +221,14 @@ aeroflow-agent
 `repeatRule` самого `RequestAnnouncementPlayback` при старте серии, а не отдельным
 сообщением на каждый тик. Emergency-команды остаются следующим срезом.
 
+`RequestAnnouncementPlayback` несёт `priority`, выводимый из типа объявления
+(задача 024): рейсовые типы — `100`, дополнительное (`supplementary`) — `50`.
+Дополнительное объявление — первый не-рейсовый путь: core создаёт
+`Announcement(type=supplementary, flightDefinitionId=null)`, тем же post-commit
+издателем публикует контракт с `priority: 50`, а playback ставит его в обычную
+последовательную очередь (форма контракта и `schemaVersion` не меняются — меняется
+только значение поля `priority`).
+
 ## Playback → Agent
 
 Примеры команд:
