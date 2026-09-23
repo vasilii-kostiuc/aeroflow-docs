@@ -269,6 +269,7 @@ core (`GET /internal/v1/audio-assets/{id}/file`) и кэширует локал�
 * AnnouncementPlaybackCompleted
 * AnnouncementPlaybackCancelled
 * AnnouncementPlaybackRescheduled
+* AnnouncementPlaybackPreempted
 * EmergencyModeActivated
 * EmergencyModeDeactivated
 
@@ -287,6 +288,12 @@ core (`GET /internal/v1/audio-assets/{id}/file`) и кэширует локал�
 меняются; поверх receipts core строит read-модель экрана очереди диспетчера
 (`GET /api/v1/dispatcher/playback-queue`). Тело события несёт дискриминатор
 `event`, поэтому получатель не зависит от PHP-классов издателя.
+
+Задача 025 добавляет `AnnouncementPlaybackPreempted`: playback публикует его при
+переходе `Playing -> Preempted`, до немедленного requeue обратно в `Pending`
+(тот же контракт-каркас, без нового поля). Пока в системе нет реального
+триггера приоритета `1000` — событие появится в проде только с задачей 026
+(emergency mode); сам механизм преемпции и приём события в core уже готовы.
 
 ---
 

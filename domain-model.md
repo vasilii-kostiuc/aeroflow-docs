@@ -965,18 +965,23 @@ kind + value + languageCode -> audioAssetId
 
 ## PlaybackJob
 
-Статус: реализованы первый, второй, третий, четвёртый и пятый тонкие срезы в
-`aeroflow-playback`. Первый — приём `RequestAnnouncementPlayback` и
-идемпотентное создание задания. Второй (задача 015) — последовательная
-приоритетная очередь, жизненный цикл задания и обратные integration events в
-core. Третий (задача 018) — отмена ожидающего задания по
-`CancelAnnouncementPlayback`. Четвёртый (задача 019) — остановка звучащего
-задания: `StopAnnouncementPlayback` от core, `audio.stop` агенту, переход
-`Playing -> Interrupted` только по факту `audio.playback_interrupted`. Пятый
-(задача 020) — повтор continuation-задания вокруг самого себя: рождение в
+Статус: реализованы первый — седьмой тонкие срезы в `aeroflow-playback`. Первый
+— приём `RequestAnnouncementPlayback` и идемпотентное создание задания. Второй
+(задача 015) — последовательная приоритетная очередь, жизненный цикл задания и
+обратные integration events в core. Третий (задача 018) — отмена ожидающего
+задания по `CancelAnnouncementPlayback`. Четвёртый (задача 019) — остановка
+звучащего задания: `StopAnnouncementPlayback` от core, `audio.stop` агенту,
+переход `Playing -> Interrupted` только по факту `audio.playback_interrupted`.
+Пятый (задача 020) — повтор continuation-задания вокруг самого себя: рождение в
 `Scheduled`, re-arm `Playing -> Scheduled` на каждом тике, delayed self-wake
-без cron и `StopAnnouncementRepeat` от core на закрытии регистрации.
-Приоритетное прерывание и emergency mode — следующие срезы, пока планируются.
+без cron и `StopAnnouncementRepeat` от core на закрытии регистрации. Шестой
+(задача 023) — видимость тиков повтора: `AnnouncementPlaybackRescheduled` на
+каждый re-arm, read-модель `ListPlaybackQueue` на last-event-wins. Седьмой
+(задача 025) — приоритетное прерывание: `Playing -> Preempted -> Pending`
+(requeue) для задания на пороге `PREEMPTIVE_PRIORITY`, пока без реального
+триггера в проде. Emergency mode целиком (persistent-режим, `Activate`/
+`DeactivateEmergencyMode`, глобальная приостановка очереди) — задача 026, ещё
+не реализована.
 
 `PlaybackJob` не является частью Flight Operations и не содержит аэропортовые
 сущности.
@@ -1192,6 +1197,42 @@ playback → core и `aeroflow-agent`.
   секцию «В очереди», а не в «Недавние» (серия жива, объявление ещё прозвучит), и
   сортируется по `nextAt` — по времени, когда тик реально прозвучит.
 
+### Седьмой срез: приоритетное прерывание (задача 025, реализован)
+
+Playback получает механизм точечного прерывания уже играющего задания более
+приоритетным — предпосылку emergency mode (задача 026). Срез целиком внутри
+playback: без реального триггера (типа объявления с приоритетом `1000`, который
+появится только в 026) он не имеет наблюдаемого эффекта и проверен синтетическим
+приоритетом в тестах.
+
+* новый статус `PlaybackJobStatus::Preempted` — транзитный, не терминальный:
+  задание немедленно возвращается в `Pending` (requeue) в рамках того же
+  application-хендлера, поэтому как персистентное состояние строки в БД
+  `preempted` не встречается — сохраняется только конечный `Pending`. Приоритет
+  и `createdAt` requeue не меняет: задание не теряет место в FIFO-порядке своего
+  приоритетного уровня;
+* `PlaybackJob` получает флаг `preemptRequested` (по образцу `stopRequested`,
+  задача 019) и метод `requestPreempt()`; оба флага **взаимоисключающие** —
+  `requestStop()`/`requestPreempt()` отклоняют себя, если другой уже взведён;
+* `PlaybackQueueDispatcher::dispatchNext()` при активном (`Playing`) задании
+  дополнительно проверяет голову очереди: если там есть `Pending`-задание
+  строго более высокого приоритета **и** не ниже порога
+  `PlaybackJob::PREEMPTIVE_PRIORITY = 1000`, дispatcher просит агента
+  остановить активное тем же `StopAudioPlayback`, что и операторский Stop
+  (019) — контракт `audio.stop`/`audio.playback_interrupted` не меняется
+  вообще, агенту не важно, зачем его попросили остановиться;
+* `HandleInterruptPlaybackJob` — единственная точка, различающая факт от агента
+  по флагу: `preemptRequested` ⇒ `Playing -> Preempted -> Pending` (requeue) и
+  новое событие `AnnouncementPlaybackPreempted`; иначе — прежнее поведение
+  `Playing -> Interrupted` (019);
+* порог преемпции — именованная константа на `PlaybackJob`, не «любой более
+  высокий приоритет»: без ограничения прерывание случайно распространилось бы
+  на обычные приоритеты (`100`/`50`/`0`), что противоречит уже
+  задокументированному правилу «обычные объявления ставятся в очередь». Playback
+  по-прежнему не обязан знать слово «emergency» — только зарезервированное
+  число;
+* `aeroflow-agent` не меняется вообще — ни контракт, ни код.
+
 Состояние:
 
 * `id`;
@@ -1209,11 +1250,16 @@ playback → core и `aeroflow-agent`.
 Pending
 Scheduled
 Playing
+Preempted
 Completed
 Interrupted
 Cancelled
 Failed
 ```
+
+`Preempted` (задача 025) — транзитный статус: в персистентном виде не
+встречается, задание проходит через него и в том же вызове возвращается в
+`Pending`.
 
 Инварианты:
 
@@ -1244,12 +1290,18 @@ Playback публикует integration events:
 * `AnnouncementPlaybackCancelled`;
 * `AnnouncementPlaybackInterrupted` (задача 019);
 * `AnnouncementPlaybackRescheduled` (задача 023);
+* `AnnouncementPlaybackPreempted` (задача 025);
 * `EmergencyModeActivated`;
 * `EmergencyModeDeactivated`.
 
 Повтор (задача 020) вводит одно новое событие — `AnnouncementPlaybackRescheduled`
 на каждый re-arm (добавлено задачей 023, см. «Шестой срез»). Терминация серии
 между тиками переиспользует `AnnouncementPlaybackCompleted`.
+
+Приоритетное прерывание (задача 025, см. «Седьмой срез») вводит
+`AnnouncementPlaybackPreempted`, публикуемое до requeue при переходе
+`Playing -> Preempted`; `AnnouncementPlaybackQueued` повторно не публикуется —
+задание не новое, просто возвращается в `Pending`.
 
 ---
 
@@ -1505,12 +1557,15 @@ Doctrine и других библиотек.
   — возможное расширение. Это первый аэропортовый путь и фундамент core-стороны
   emergency-режима. (Пересматривает первоначальный ad-hoc-text вариант задачи 024
   после сверки с `legacy-sao-user-guide.md`.)
-* приоритетное прерывание (преемпция) для emergency (задача 026, ещё не
-  реализовано, зафиксировано здесь как принятое направление): экстренное
-  объявление (`1000`) прерывает звучащее обычное задание, которое переходит в
-  **новый статус `Preempted` и затем re-queue** (возврат в очередь), а не
-  теряется; глобальная приостановка обычной очереди и отдельный emergency-транспорт
-  (ADR 002, уровень 2) — часть того же будущего среза.
+* приоритетное прерывание (преемпция) — playback-механика **реализована**
+  задачей 025 (см. `PlaybackJob`, «Седьмой срез»): задание на пороге
+  `PREEMPTIVE_PRIORITY` (`1000`) прерывает звучащее обычное, которое переходит в
+  **статус `Preempted` и затем re-queue** (возврат в `Pending`), а не теряется;
+  приоритет и `createdAt` при requeue не меняются. Реального триггера с
+  приоритетом `1000` в проде пока нет — его даёт только задача 026 (emergency
+  mode): экстренное объявление, `Activate`/`DeactivateEmergencyMode`, глобальная
+  приостановка обычной очереди и отдельный emergency-транспорт (ADR 002,
+  уровень 2) — ещё не реализованы, зафиксированы как принятое направление.
 
 Следующие вопросы должны быть уточнены соответствующим use case до реализации:
 
