@@ -1,6 +1,6 @@
 # Server-Side Operational Day
 
-Status: In Progress  
+Status: Done  
 Bounded context: Flight Operations  
 Service: aeroflow-core, aeroflow-web  
 Change type: Application/API change + Read model + small Frontend
@@ -147,7 +147,7 @@ Backend:
 * `GET /dispatcher/board` возвращает текущий операционный день и по одному
   occurrence на карточку по правилу выше; незавершённый вчерашний прогон виден,
   завершённый вчерашний и `scheduled`-вчерашний — нет;
-* покрыто application- и functional-тестами.
+* покрыто application-, integration- и functional-тестами.
 
 Frontend:
 
@@ -167,7 +167,16 @@ docker compose exec -T aeroflow_core_app php bin/phpunit tests/Functional
 npm run lint && npm run typecheck && npm run test:run && npm run build
 ```
 
-Manual QA:
+Сценарий полуночи целиком (открыть регистрацию до полуночи → после полуночи
+прогон остаётся на доске со своей датой, новый прогон отклоняется `409` →
+закрыть регистрацию и начать посадку → новый прогон уже на новый день)
+автоматизирован в `tests/Functional/FlightOperations/Api/MidnightCarryOverTest.php`:
+в test-окружении порт операционного дня подменён
+`Tests\Support\FrozenOperationalDayProvider`, который тест «переводит» через
+полночь. Правила выбора текущего прогона на реальном PostgreSQL проверяет
+`tests/Integration/.../DbalDispatcherBoardQueryTest.php`.
+
+Manual QA (web):
 
 ```text
 1. Открыть /dispatcher: поля даты нет.
