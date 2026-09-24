@@ -219,10 +219,18 @@ aeroflow-agent
 объявления «продолжение регистрации» на закрытии регистрации — тоже нейтральная
 команда, `Announcement` остаётся `Prepared`; интервал повтора приходит один раз в
 `repeatRule` самого `RequestAnnouncementPlayback` при старте серии, а не отдельным
-сообщением на каждый тик. Emergency-команды остаются следующим срезом.
+сообщением на каждый тик. `ActivateEmergencyMode`/`DeactivateEmergencyMode` (задача 026) — единственные, кто
+идёт **не** этой очередью: у них собственный транспорт `emergency_commands` с
+собственным сериализатором (ADR 002, уровень 2, реализован), потому что
+control-plane сигнал не должен стоять в брокере позади bulk-трафика обычных
+запросов; в dev-стеке его слушает отдельный worker. Различаются те же тем же
+полем `command` (`emergency_mode.activate|deactivate`). Активацию публикует core
+пост-коммит на `AnnouncementCreated` с `type = emergency`, деактивацию — по прямому
+HTTP-запросу диспетчера; `Announcement` при этом не меняется.
 
 `RequestAnnouncementPlayback` несёт `priority`, выводимый из типа объявления
-(задача 024): рейсовые типы — `100`, дополнительное (`supplementary`) — `50`.
+(задачи 024 и 026): экстренное (`emergency`) — `1000`, рейсовые типы — `100`,
+дополнительное (`supplementary`) — `50`.
 Дополнительное объявление — первый не-рейсовый путь: core создаёт
 `Announcement(type=supplementary, flightDefinitionId=null)`, тем же post-commit
 издателем публикует контракт с `priority: 50`, а playback ставит его в обычную
@@ -291,9 +299,18 @@ core (`GET /internal/v1/audio-assets/{id}/file`) и кэширует локал�
 
 Задача 025 добавляет `AnnouncementPlaybackPreempted`: playback публикует его при
 переходе `Playing -> Preempted`, до немедленного requeue обратно в `Pending`
-(тот же контракт-каркас, без нового поля). Пока в системе нет реального
-триггера приоритета `1000` — событие появится в проде только с задачей 026
-(emergency mode); сам механизм преемпции и приём события в core уже готовы.
+(тот же контракт-каркас, без нового поля). Реальный триггер приоритета `1000` даёт
+задача 026 — экстренное объявление.
+
+Задача 026 добавляет `EmergencyModeActivated`/`EmergencyModeDeactivated`
+(`event: emergency_mode.activated|deactivated`) на ту же очередь
+`playback_events`. Это единственные обратные факты, не связанные с заданием: режим
+глобален, поэтому у них нет `announcementId` и `jobId` — только `event`,
+`messageId`, `occurredAt`, `schemaVersion`. Core разбирает их отдельной веткой
+сериализатора, хранит зеркало состояния одной строкой и отдаёт диспетчеру через
+`GET /api/v1/dispatcher/emergency-announcements/mode`: баннер экстренного режима
+показывает то, что действительно включилось в playback, а не то, что core
+попросил.
 
 ---
 

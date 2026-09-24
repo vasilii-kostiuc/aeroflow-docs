@@ -180,7 +180,7 @@ Audit является supporting subdomain и может строиться и�
 
 ### Playback
 
-Статус: планируется.
+Статус: реализован (задачи 013—026).
 
 Отвечает только за `PlaybackJob`, очередь, приоритеты, повторы и emergency mode.
 
@@ -628,13 +628,16 @@ FlightDefinition
 * окончание регистрации;
 * приглашение на посадку;
 * прибытие;
-* дополнительное (`supplementary`, задача 024) — единственный не-рейсовый
-  (аэропортовый) тип: без рейса, стоек и выхода.
+* дополнительное (`supplementary`, задача 024) — не-рейсовый (аэропортовый) тип:
+  без рейса, стоек и выхода;
+* экстренное (`emergency`, задача 026) — второй аэропортовый тип: тоже без рейса,
+  стоек и выхода, но его запуск дополнительно включает экстренный режим playback.
 
 Приоритет воспроизведения выводится из типа (`AnnouncementType::playbackPriority()`),
-а не из константы издателя: рейсовые типы — `100`, `supplementary` — `50`. Метод
-`requiresFlight()` отличает пять рейсовых типов (`true`) от `supplementary`
-(`false`).
+а не из константы издателя: `emergency` — `1000` (зарезервированный преемптивный
+порог playback), рейсовые типы — `100`, `supplementary` — `50`. Метод
+`requiresFlight()` отличает пять рейсовых типов (`true`) от аэропортовых
+`supplementary` и `emergency` (`false`).
 
 Реализованные инварианты:
 
@@ -706,6 +709,37 @@ value-объектов (тот же прагматичный выбор, что 
 (межагрегатная проверка — в application через порт `AudioPromptLookupInterface`).
 События: `SupplementaryTemplateCreated`, `SupplementaryTemplateUpdated`,
 `SupplementaryTemplateActivated`, `SupplementaryTemplateDeactivated`.
+
+Экстренное объявление (`emergency`, задача 026) идёт тем же путём и намеренно
+зеркалит его: отдельный aggregate root `EmergencyAnnouncementTemplate` той же формы
+(имя, языковые варианты `{languageCode -> audioAssetId}`, активность, события
+`EmergencyTemplateCreated|Updated|Activated|Deactivated`), admin CRUD
+(`/api/v1/admin/emergency-announcement-templates`), dispatcher-список активных
+пресетов и use case `LaunchEmergencyAnnouncement`, создающий
+`Announcement(type=emergency, flightDefinitionId=null)`. Пресет не сведён с
+`SupplementaryAnnouncementTemplate` в один тип с флагом сознательно: их отличает не
+содержание, а последствие запуска — экстренный пресет всегда включает экстренный
+режим и останавливает обычную очередь, дополнительный — никогда.
+
+Запуск экстренного объявления — **одно действие с двумя эффектами**, оба публикуются
+после коммита из одного доменного факта `AnnouncementCreated`: обычный
+`PublishAnnouncementPlaybackRequest` ставит объявление в очередь с `priority: 1000`,
+а `PublishEmergencyModeActivation` (реагирует только на `type === emergency`)
+публикует `ActivateEmergencyMode` через порт `EmergencyModePublisherInterface`.
+Снятие режима — отдельное явное действие
+(`POST /api/v1/dispatcher/emergency-announcements:deactivate`), нейтральная
+операторская команда в духе `StopAnnouncementPlayback`: ни один `Announcement` не
+меняется, playback просто перестаёт держать очередь.
+
+Состояние режима принадлежит playback, поэтому core держит его **зеркало**: playback
+после каждой смены публикует на очередь `playback_events` факты
+`emergency_mode.activated` / `emergency_mode.deactivated` (без `announcementId` и
+`jobId` — режим глобален), core записывает их в одну строку
+(`EmergencyModeRecord`, порт `EmergencyModeStateInterface`) и отдаёт диспетчеру
+через `GET /api/v1/dispatcher/emergency-announcements/mode`. Отчёт старее
+записанного игнорируется, поэтому запоздалый `activated` не воскрешает уже снятый
+режим. Баннер диспетчера так показывает то, что действительно включилось в
+playback, а не то, что core попросил.
 
 Рейсовое объявление создаётся как часть действия диспетчера над
 `FlightOccurrence`. Оркестрацию ведёт `Flight Operations\Application`: он
@@ -978,10 +1012,11 @@ kind + value + languageCode -> audioAssetId
 (задача 023) — видимость тиков повтора: `AnnouncementPlaybackRescheduled` на
 каждый re-arm, read-модель `ListPlaybackQueue` на last-event-wins. Седьмой
 (задача 025) — приоритетное прерывание: `Playing -> Preempted -> Pending`
-(requeue) для задания на пороге `PREEMPTIVE_PRIORITY`, пока без реального
-триггера в проде. Emergency mode целиком (persistent-режим, `Activate`/
-`DeactivateEmergencyMode`, глобальная приостановка очереди) — задача 026, ещё
-не реализована.
+(requeue) для задания на пороге `PREEMPTIVE_PRIORITY`. Восьмой (задача 026) —
+экстренный режим: persistent-агрегат `EmergencyMode`, `Activate`/
+`DeactivateEmergencyMode` на собственном транспорте и глобальная приостановка
+обычной очереди; он же даёт преемпции реальный триггер — объявление с приоритетом
+`1000`.
 
 `PlaybackJob` не является частью Flight Operations и не содержит аэропортовые
 сущности.
@@ -1233,6 +1268,37 @@ playback: без реального триггера (типа объявлен�
   число;
 * `aeroflow-agent` не меняется вообще — ни контракт, ни код.
 
+### Восьмой срез: экстренный режим (задача 026, реализован)
+
+Преемпция (025) отвечает на вопрос «что делать с тем, что уже звучит». Экстренный
+режим отвечает на второй, независимый вопрос — «можно ли вообще начинать обычное
+задание», и держит очередь, пока диспетчер его не снимет.
+
+* `EmergencyMode` — aggregate root Playback: одна строка с фиксированным id,
+  `active`, `activatedAt`, `deactivatedAt`. Persistent, а не in-memory флаг:
+  экстренная ситуация переживает рестарт worker'а, иначе очередь возобновилась бы
+  сама;
+* `HandleActivateEmergencyMode` / `HandleDeactivateEmergencyMode` идемпотентны, как
+  остальные входящие команды: повторная активация уже активного режима (например,
+  второе экстренное объявление подряд) — no-op, обратного события не публикует.
+  Деактивация дополнительно продвигает очередь, чтобы ожидавшее задание не ждало
+  следующего события;
+* guard в `PlaybackQueueDispatcher::dispatchNext()`: пока режим активен, кандидатами
+  отбора становятся только задания на пороге `PREEMPTIVE_PRIORITY` — технически
+  необязательный параметр `findNextPendingForUpdate(?int $minPriority = null)`.
+  Ветка независима от 025: 025 прерывает звучащее, 026 не даёт стартовать новому
+  обычному даже на свободном audio output;
+* транспорт — отдельная очередь `emergency_commands` со своим сериализатором
+  (ADR 002, уровень 2), а не `announcement_playback`: control-plane сигнал не должен
+  стоять за bulk-трафиком обычных запросов. В dev-стеке её слушает отдельный worker
+  — изоляция очереди без отдельного потребителя ничего не даёт;
+* обратно в core playback публикует `EmergencyModeActivated`/
+  `EmergencyModeDeactivated` (`event: emergency_mode.activated|deactivated`) на уже
+  существующую очередь `playback_events`. Эти факты — единственные, не связанные с
+  заданием: у них нет `announcementId` и `jobId`, потому что режим глобален;
+* `aeroflow-agent` не меняется: физическая остановка звучащего идёт тем же
+  `audio.stop`, который ввела задача 019.
+
 Состояние:
 
 * `id`;
@@ -1269,7 +1335,10 @@ Failed
 * рейсовое объявление имеет приоритет `100`;
 * дополнительное объявление имеет приоритет `50`;
 * фоновая музыка имеет приоритет `0`;
-* emergency mode приостанавливает обычную очередь;
+* emergency mode приостанавливает обычную очередь: пока он активен, задание ниже
+  `PREEMPTIVE_PRIORITY` не стартует даже на свободном audio output;
+* emergency mode переживает рестарт процесса и снимается только явной командой;
+* активация и деактивация режима идемпотентны;
 * после завершения emergency mode обычная очередь может продолжиться;
 * повторно доставленная команда не должна создавать дубликат задания.
 
@@ -1279,8 +1348,8 @@ Playback принимает integration commands:
 * `CancelAnnouncementPlayback`;
 * `StopAnnouncementPlayback` (задача 019);
 * `StopAnnouncementRepeat` (задача 020);
-* `ActivateEmergencyMode`;
-* `DeactivateEmergencyMode`.
+* `ActivateEmergencyMode` (задача 026, очередь `emergency_commands`);
+* `DeactivateEmergencyMode` (задача 026, очередь `emergency_commands`).
 
 Playback публикует integration events:
 
@@ -1291,8 +1360,8 @@ Playback публикует integration events:
 * `AnnouncementPlaybackInterrupted` (задача 019);
 * `AnnouncementPlaybackRescheduled` (задача 023);
 * `AnnouncementPlaybackPreempted` (задача 025);
-* `EmergencyModeActivated`;
-* `EmergencyModeDeactivated`.
+* `EmergencyModeActivated` (задача 026);
+* `EmergencyModeDeactivated` (задача 026).
 
 Повтор (задача 020) вводит одно новое событие — `AnnouncementPlaybackRescheduled`
 на каждый re-arm (добавлено задачей 023, см. «Шестой срез»). Терминация серии
@@ -1561,11 +1630,21 @@ Doctrine и других библиотек.
   задачей 025 (см. `PlaybackJob`, «Седьмой срез»): задание на пороге
   `PREEMPTIVE_PRIORITY` (`1000`) прерывает звучащее обычное, которое переходит в
   **статус `Preempted` и затем re-queue** (возврат в `Pending`), а не теряется;
-  приоритет и `createdAt` при requeue не меняются. Реального триггера с
-  приоритетом `1000` в проде пока нет — его даёт только задача 026 (emergency
-  mode): экстренное объявление, `Activate`/`DeactivateEmergencyMode`, глобальная
-  приостановка обычной очереди и отдельный emergency-транспорт (ADR 002,
-  уровень 2) — ещё не реализованы, зафиксированы как принятое направление.
+  приоритет и `createdAt` при requeue не меняются.
+* экстренный режим (реализовано, задача 026) — даёт преемпции реальный триггер и
+  добавляет к ней вторую, независимую гарантию: пока режим активен, обычное
+  задание **не стартует** даже на свободном audio output. Решения: контент — пресет
+  `EmergencyAnnouncementTemplate` (зеркало supplementary, отдельный aggregate root,
+  потому что различается последствие запуска, а не форма); тип `emergency`
+  (`playbackPriority()` = `1000`, `requiresFlight()` = `false`); запуск — одно
+  действие с двумя пост-коммит эффектами (`RequestAnnouncementPlayback` +
+  `ActivateEmergencyMode`); снятие — отдельная нейтральная команда, не меняющая ни
+  один `Announcement`; транспорт — выделенная очередь `emergency_commands`
+  (ADR 002, уровень 2) с отдельным worker'ом; состояние режима принадлежит
+  playback, core держит eventual-зеркало по обратным событиям
+  `emergency_mode.activated|deactivated` и отдаёт его диспетчерскому баннеру.
+  Авто-повтор экстренного объявления, пока режим активен, и таймаут авто-снятия
+  сознательно не вводятся — возможное будущее расширение.
 
 Следующие вопросы должны быть уточнены соответствующим use case до реализации:
 
