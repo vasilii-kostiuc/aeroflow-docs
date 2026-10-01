@@ -1,6 +1,6 @@
 # Генерация AudioAsset через TTS (первый срез)
 
-Status: Planned
+Status: Done
 Bounded context: Audio Catalog (Core — порт, адаптер, `AudioAsset.source`,
 генерация), новый инфраструктурный сервис `aeroflow-tts` (stateless, вне доменных
 контекстов)
