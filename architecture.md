@@ -270,6 +270,9 @@ core (`GET /internal/v1/audio-assets/{id}/file`) и кэширует локал�
 
 ## Playback → Core
 
+Помимо фактов о заданиях и экстренном режиме, playback шлёт heartbeat воркеров
+`playback.heartbeat` (задача 034, см. «Наблюдение за состоянием системы»).
+
 Примеры событий:
 
 * AnnouncementPlaybackQueued
@@ -311,6 +314,39 @@ core (`GET /internal/v1/audio-assets/{id}/file`) и кэширует локал�
 `GET /api/v1/dispatcher/emergency-announcements/mode`: баннер экстренного режима
 показывает то, что действительно включилось в playback, а не то, что core
 попросил.
+
+## Наблюдение за состоянием системы
+
+Задача 034. Встроенная панель для on-prem установки: администратор видит
+состояние всех компонентов, диспетчер — предупреждение, если объявления сейчас
+могут не прозвучать. Это не замена полноценному мониторингу
+(Prometheus/Alertmanager — возможное будущее решение).
+
+Транспорт AMQP в Symfony Messenger опрашивает очередь (`basic.get`), а не держит
+подписку, поэтому у очередей, которые разбирают воркеры core и playback, в
+RabbitMQ всегда 0 потребителей. Живость воркеров определяется по heartbeat:
+
+* каждый воркер Messenger (слушатель `WorkerRunningEvent`) не чаще раза в 15 с
+  сообщает, какие транспорты он разбирает; ошибка отправки только логируется и
+  не останавливает воркер;
+* playback публикует факт `playback.heartbeat` в очередь `playback_events` — как
+  факты экстренного режима, без `announcementId`/`jobId`: `event`, `messageId`,
+  `occurredAt`, `schemaVersion: 1`, `transports`, `pendingJobs`, `playingSince`
+  (время старта звучащего задания или `null`);
+* core хранит последний heartbeat каждого воркера (модуль `SystemStatus`,
+  таблица `system_heartbeat`); свой воркер core пишет туда напрямую. Heartbeat
+  старше 60 с — воркер считается остановленным.
+
+Агент (.NET) держит настоящую подписку на `agent_commands`, поэтому его
+подключение видно по числу потребителей в management API RabbitMQ
+(`RABBITMQ_MANAGEMENT_URL`); подробный heartbeat агента — следующий срез. Core
+дополнительно проверяет свою БД, `GET {TTS_BASE_URL}/health`, глубину очередей
+и «задание звучит дольше 10 минут».
+
+API: `GET /api/v1/admin/system-status` (администратор, все компоненты) и
+`GET /api/v1/dispatcher/system-alerts` (диспетчер, только проблемы, из-за которых
+объявления могут не прозвучать или экран очереди отстаёт, понятным языком).
+`SystemStatus` — служебный модуль наблюдения, а не доменный контекст.
 
 ---
 

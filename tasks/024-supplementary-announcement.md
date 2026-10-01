@@ -1,6 +1,6 @@
 # Дополнительное объявление (supplementary, priority 50)
 
-Status: Draft
+Status: Done
 Bounded context: Announcements (Core — новый не-рейсовый тип и путь запуска),
 Playback (без изменений домена — только приоритет в контракте), dispatcher
 feature (aeroflow-web)
