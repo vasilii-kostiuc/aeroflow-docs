@@ -800,7 +800,7 @@ value-объектов (тот же прагматичный выбор, что 
 outbox в транзакции запуска из одного доменного факта `AnnouncementCreated`: обычный
 `PublishAnnouncementPlaybackRequest` ставит объявление в очередь с `priority: 1000`,
 а `PublishEmergencyModeActivation` (реагирует только на `type === emergency`)
-публикует `ActivateEmergencyMode` через порт `EmergencyModePublisherInterface`.
+публикует `ActivateEmergencyMode` через порт `PlaybackCommandPublisherInterface`.
 Снятие режима — отдельное явное действие
 (`POST /api/v1/dispatcher/emergency-announcements:deactivate`), нейтральная
 операторская команда в духе `StopAnnouncementPlayback`: ни один `Announcement` не
@@ -1593,9 +1593,8 @@ Integration messages Core публикуются через transactional outbox
 
 * в outbox попадают **интеграционные сообщения** (публичный контракт), а не
   доменные события — те остаются внутри контекста;
-* application layer по-прежнему зависит от портов издателей
-  (`PlaybackRequestPublisherInterface`, `EmergencyModePublisherInterface`); их
-  реализации пишут готовое тело контракта в таблицу `outbox_message` через то же
+* application layer зависит от порта издателя `PlaybackCommandPublisherInterface`;
+  его реализация пишет готовое тело контракта в таблицу `outbox_message` через то же
   соединение, что и ORM, поэтому строка коммитится или откатывается вместе с
   use case;
 * обработчики доменных событий выполняются после use case, но **внутри**
@@ -1752,6 +1751,13 @@ Doctrine и других библиотек.
   транспорт Messenger; запись — через существующие порты издателей, обработчики не
   меняются; доставка — relay с publisher confirms, по порядку внутри очереди.
   Playback остаётся на post-commit publisher.
+* один порт на границу Core → Playback (задача 036):
+  `PlaybackCommandPublisherInterface::publish(PlaybackCommand)` вместо
+  `PlaybackRequestPublisherInterface` и `EmergencyModePublisherInterface`; все шесть
+  DTO контракта реализуют маркерный `PlaybackCommand`. Очередь — деталь адаптера и
+  выбирается по типу команды (`ActivateEmergencyMode`/`DeactivateEmergencyMode` →
+  `emergency_commands`, остальные → `announcement_playback`); отдельный порт ради
+  отдельной очереди не нужен — срочность выражена типом команды.
 * ручной поток допускает **несколько occurrence по одной карточке в день** (см.
   задачу 014): повторный прогон создаётся через `StartNextManualFlightOccurrence`
   с серверным инкрементом `sequenceNumber`; защита от дубля — доменное состояние
