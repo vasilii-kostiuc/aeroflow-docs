@@ -155,9 +155,9 @@ aeroflow-agent
    сохраняется.
 6. `aeroflow-core` атомарно (одна локальная транзакция) переводит occurrence в
    `check_in_open` и сохраняет `Announcement`.
-7. После коммита контекст `Announcements` в `aeroflow-core` публикует команду
-   `RequestAnnouncementPlayback` (асинхронно, RabbitMQ; durable outbox отложен —
-   post-commit публикация из application layer).
+7. В той же транзакции контекст `Announcements` записывает команду
+   `RequestAnnouncementPlayback` в outbox; после коммита relay доставляет её в
+   RabbitMQ (transactional outbox, задача 035).
 8. `aeroflow-playback` создаёт `PlaybackJob` (идемпотентно по `messageId`).
 9. Если очередь свободна, `aeroflow-playback` отправляет команду `PlayAudioSequence` агенту.
 10. `aeroflow-agent` воспроизводит аудио.
@@ -199,6 +199,15 @@ aeroflow-agent
 
 Используется RabbitMQ.
 
+Исходящие команды core идут через transactional outbox (задача 035): core пишет
+готовое тело сообщения в таблицу `outbox_message` в той же транзакции, что и
+изменение состояния, а отдельный процесс `app:outbox:relay` (контейнер
+`aeroflow_core_outbox_relay`) доставляет строки в RabbitMQ по порядку внутри
+очереди, с подтверждением брокера. Недоступный брокер не ломает действие
+диспетчера — сообщения ждут в outbox. Playback пока публикует события и команды
+агенту после коммита из памяти процесса (post-commit publisher) — outbox для него
+не введён.
+
 ## Core → Playback
 
 Примеры команд:
@@ -232,7 +241,7 @@ HTTP-запросу диспетчера; `Announcement` при этом не м
 (задачи 024 и 026): экстренное (`emergency`) — `1000`, рейсовые типы — `100`,
 дополнительное (`supplementary`) — `50`.
 Дополнительное объявление — первый не-рейсовый путь: core создаёт
-`Announcement(type=supplementary, flightDefinitionId=null)`, тем же post-commit
+`Announcement(type=supplementary, flightDefinitionId=null)`, тем же
 издателем публикует контракт с `priority: 50`, а playback ставит его в обычную
 последовательную очередь (форма контракта и `schemaVersion` не меняются — меняется
 только значение поля `priority`).
