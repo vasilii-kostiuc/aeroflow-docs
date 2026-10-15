@@ -623,8 +623,9 @@ continuation-серию через порт, если для рейса вклю
 dispatcher action on FlightOccurrence
     -> FlightOccurrence transition (authority)  ─┐ одна локальная транзакция
     -> create Announcement (через порт)         ─┘
-    -> domain events (факты, после коммита)
-    -> RequestAnnouncementPlayback (async, outbox, отдельная граница)
+    -> domain events (факты; обрабатываются в той же транзакции)
+    -> RequestAnnouncementPlayback (запись в outbox в той же транзакции,
+                                    доставка relay после коммита — отдельная граница)
 ```
 
 Текущая связь:
@@ -795,8 +796,8 @@ value-объектов (тот же прагматичный выбор, что 
 содержание, а последствие запуска — экстренный пресет всегда включает экстренный
 режим и останавливает обычную очередь, дополнительный — никогда.
 
-Запуск экстренного объявления — **одно действие с двумя эффектами**, оба публикуются
-после коммита из одного доменного факта `AnnouncementCreated`: обычный
+Запуск экстренного объявления — **одно действие с двумя эффектами**, оба пишутся в
+outbox в транзакции запуска из одного доменного факта `AnnouncementCreated`: обычный
 `PublishAnnouncementPlaybackRequest` ставит объявление в очередь с `priority: 1000`,
 а `PublishEmergencyModeActivation` (реагирует только на `type === emergency`)
 публикует `ActivateEmergencyMode` через порт `EmergencyModePublisherInterface`.
@@ -873,25 +874,23 @@ Flight Operations и Audio Catalog. Snapshots и итоговая последо
 
 `Announcement` создаётся в Core синхронно и в одной транзакции с переходом
 occurrence. Отправка в playback — отдельная асинхронная граница ниже по течению:
-после коммита локальной транзакции application layer контекста `Announcements`
-публикует integration command `RequestAnnouncementPlayback` в `aeroflow-playback`,
-а `PlaybackJob` создаётся уже в playback eventual-образом. Нельзя путать эти два
+application layer контекста `Announcements` в той же транзакции записывает
+integration command `RequestAnnouncementPlayback` в outbox, relay доставляет его в
+`aeroflow-playback` после коммита, а `PlaybackJob` создаётся уже в playback
+eventual-образом. Нельзя путать эти два
 «создания»: `Announcement` принадлежит Core, `PlaybackJob` — playback.
 
 Издателем `RequestAnnouncementPlayback` является контекст-владелец `Announcement`
 и готовой `AudioSequence` — `Announcements`, а не `Flight Operations`. Публикация
-выполняется как реакция application layer на доменный факт `AnnouncementCreated`
-**после** коммита (через тот же post-commit механизм, что и остальные доменные
-события: события буферизуются в transaction scope и отдаются только после успешного
-коммита). Так `Flight Operations` не знает про playback, а контракт принадлежит
-владельцу аудиопоследовательности.
+выполняется как реакция application layer на доменный факт `AnnouncementCreated`:
+события буферизуются на время use case и отдаются обработчикам после него, но ещё
+**внутри** его транзакции; обработчик пишет сообщение в outbox (задача 035). Так
+`Flight Operations` не знает про playback, а контракт принадлежит владельцу
+аудиопоследовательности.
 
-Транспорт между Core и `aeroflow-playback` — RabbitMQ (Symfony Messenger,
-AMQP-транспорт). Durable transactional outbox в первой версии **отложен**: пока
-используется post-commit публикация из application layer без отдельной outbox-таблицы.
-Это осознанный временный компромисс с известным риском потери сообщения при крахе
-процесса между коммитом и публикацией; durable outbox вводится отдельным шагом и не
-меняет доменную модель (точка публикации остаётся в application layer).
+Транспорт между Core и `aeroflow-playback` — RabbitMQ через transactional outbox
+(задача 035, см. «Согласованность и транзакции»): сообщение уходит тогда и только
+тогда, когда закоммичено породившее его изменение.
 
 Контракт `RequestAnnouncementPlayback` нейтрален и не содержит аэропортовых
 сущностей: `command` (дискриминатор типа в теле — ADR 002, введён задачей 018),
@@ -902,7 +901,7 @@ AMQP-транспорт). Durable transactional outbox в первой верс�
 получает шаблоны, prompts, стойки или выходы.
 
 Для отмены используется `CancelAnnouncementPlayback` (реализовано задачей 018).
-Издатель тот же — `Announcements`, post-commit реакция на доменный факт
+Издатель тот же — `Announcements`, реакция на доменный факт
 `AnnouncementCancelled`: агрегат публикует событие только при первом переходе в
 `Cancelled`, поэтому повторная отмена не дублирует команду. Контракт:
 `command: announcement_playback.cancel`, `messageId`, `correlationId`
@@ -922,7 +921,7 @@ AMQP-транспорт). Durable transactional outbox в первой верс�
 раздел `FlightOccurrence`). Серию завершает `endRepeat()` — идемпотентный переход
 (как `cancel()`), публикующий `AnnouncementRepeatEnded` только при первом
 переходе; сам `Announcement` остаётся `Prepared`, это не отмена. `Announcements`
-post-commit реагирует на `AnnouncementRepeatEnded` и публикует
+реагирует на `AnnouncementRepeatEnded` и публикует
 `StopAnnouncementRepeat` (`command: announcement_playback.stop_repeat`, тот же
 `messageId`/`correlationId`/`announcementId`/`occurredAt`/`schemaVersion`
 контракт, что у cancel и stop — четвёртый тип на очереди `announcement_playback`,
@@ -1559,8 +1558,8 @@ dispatcher action on FlightOccurrence
 ```
 
 Domain events перехода описывают уже состоявшийся факт и не запускают создание
-основного объявления. `RequestAnnouncementPlayback` пересекает границу сервиса
-после коммита локальной транзакции.
+основного объявления. `RequestAnnouncementPlayback` записывается в outbox в той
+же транзакции и пересекает границу сервиса после её коммита.
 
 Требования к integration messages:
 
@@ -1590,14 +1589,29 @@ Domain events перехода описывают уже состоявшийс�
 текущий use case требует немедленного ответа другого контекста. Такой вызов не
 создаёт общей транзакционной границы между агрегатами.
 
-Для надёжной публикации integration messages из транзакции Core или Playback
-следует использовать transactional outbox. Решение по первой версии: durable
-outbox **отложен**, транспорт между сервисами — RabbitMQ, публикация выполняется
-из application layer после коммита (post-commit publisher). Это осознанный
-временный компромисс с известным риском потери сообщения при крахе между коммитом
-и публикацией. До внедрения durable outbox место публикации сообщений остаётся в
-application layer, чтобы и outbox, и транспорт можно было ввести без изменения
-доменной модели.
+Integration messages Core публикуются через transactional outbox (задача 035):
+
+* в outbox попадают **интеграционные сообщения** (публичный контракт), а не
+  доменные события — те остаются внутри контекста;
+* application layer по-прежнему зависит от портов издателей
+  (`PlaybackRequestPublisherInterface`, `EmergencyModePublisherInterface`); их
+  реализации пишут готовое тело контракта в таблицу `outbox_message` через то же
+  соединение, что и ORM, поэтому строка коммитится или откатывается вместе с
+  use case;
+* обработчики доменных событий выполняются после use case, но **внутри**
+  его транзакции (`doctrine_transaction` оборачивает
+  `DomainEventTransactionMiddleware`). Ошибка обработчика откатывает весь use case.
+  Правило: обработчик доменного события не обращается к внешним системам (HTTP,
+  брокер) — всё, что уходит из сервиса, идёт через outbox;
+* доставку выполняет relay (`app:outbox:relay`, один процесс): по порядку
+  внутри очереди, с publisher confirms, строка удаляется после подтверждения
+  брокера; при ошибке очередь ждёт следующего прохода, не пропуская сообщение.
+  Доставка at-least-once — получатель отбрасывает дубль по `messageId`.
+
+Playback пока публикует обратные события и команды агенту после коммита из памяти
+процесса (post-commit publisher, `IntegrationEventTransactionMiddleware`). Это
+осознанный временный компромисс с известным риском потери сообщения при крахе
+между коммитом и отправкой; outbox для playback — отдельный шаг той же формы.
 
 Optimistic locking следует добавлять агрегатам с конкурентными командами, прежде
 всего `FlightOccurrence` (запуск объявления грузит occurrence на запись) и
@@ -1729,10 +1743,15 @@ Doctrine и других библиотек.
 * форма API — action-эндпоинты над `FlightOccurrence` (см. задачу 011);
   definition-based путь создания рейсового объявления деприкейтится;
 * интеграция Core → Playback (см. задачу 013): `RequestAnnouncementPlayback`
-  публикует контекст `Announcements` после коммита, реагируя на `AnnouncementCreated`;
-  транспорт — RabbitMQ; durable transactional outbox отложен (post-commit publisher
-  как временный компромисс с известным риском); первый срез playback создаёт
-  `PlaybackJob` идемпотентно по `messageId`, без очереди и emergency mode.
+  публикует контекст `Announcements`, реагируя на `AnnouncementCreated`; транспорт —
+  RabbitMQ; первый срез playback создаёт `PlaybackJob` идемпотентно по `messageId`,
+  без очереди и emergency mode. Post-commit publisher первой версии заменён
+  transactional outbox (задача 035).
+* transactional outbox в Core (задача 035): в outbox — интеграционные сообщения, а
+  не доменные события; своя таблица `outbox_message` с готовым телом контракта, а не
+  транспорт Messenger; запись — через существующие порты издателей, обработчики не
+  меняются; доставка — relay с publisher confirms, по порядку внутри очереди.
+  Playback остаётся на post-commit publisher.
 * ручной поток допускает **несколько occurrence по одной карточке в день** (см.
   задачу 014): повторный прогон создаётся через `StartNextManualFlightOccurrence`
   с серверным инкрементом `sequenceNumber`; защита от дубля — доменное состояние
